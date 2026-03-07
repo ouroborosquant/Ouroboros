@@ -1,0 +1,733 @@
+[INFO] Fortress v5 — Backtest Pipeline | Sat Mar  7 23:28:57 CET 2026
+[INFO] Log: /home/alexr/fortress_v5/logs/pipeline_20260307_232857.log
+[WARN] --skip-audit set. Skipping integrity gate. Results may be fiction.
+
+[0;36m══════════════════════════════════════════[0m
+[0;36m  Stage 1: Regime Posterior Precomputation[0m
+[0;36m══════════════════════════════════════════[0m
+2026-03-07 23:28:58,105 - INFO - ══════ Fortress v5 — Regime Posterior Precomputation ══════
+2026-03-07 23:28:58,105 - INFO - Window: 2019-01-02 → 2024-12-31
+2026-03-07 23:28:58,340 - INFO - Trading calendar: 1510 days
+2026-03-07 23:28:58,340 - INFO - Weights not found at models/weights/mamba_kan_latest.pt. Running in Synthetic Mode.
+2026-03-07 23:28:58,340 - INFO - Synthetic Mode active — generating regime-switching GBM market data.
+2026-03-07 23:28:58,340 - INFO - Building cross-asset correlation matrix (5-factor model)...
+2026-03-07 23:28:58,341 - INFO - Sampling Markov regime sequence...
+2026-03-07 23:28:58,350 - INFO - Regime distribution: {'bull_low_vol': 1421, 'bull_high_vol': 66, 'bear': 14, 'crisis': 9}
+2026-03-07 23:28:58,351 - INFO - Simulating 1510 days × 25 assets via Markov-switching GBM...
+2026-03-07 23:28:58,454 - INFO - ✅ Saved prices/returns → research/outputs/cache/prices_wide.parquet, research/outputs/cache/returns_wide.parquet
+2026-03-07 23:28:58,454 - INFO - Building long-format market_data parquet...
+2026-03-07 23:28:59,443 - INFO - ✅ Saved market_data → research/outputs/cache/market_data.parquet (37,750 rows)
+2026-03-07 23:28:59,443 - INFO - Constructing 52-dim obs vectors (rolling causal statistics)...
+2026-03-07 23:28:59,847 - INFO - Computing PCA surrogate regime posteriors (window=63d, dims=16)...
+2026-03-07 23:28:59,998 - INFO -   PCA posterior [200/1510] date=2019-10-17 z_mu[0]=1.962
+2026-03-07 23:29:00,149 - INFO -   PCA posterior [400/1510] date=2020-08-04 z_mu[0]=-1.937
+2026-03-07 23:29:00,306 - INFO -   PCA posterior [600/1510] date=2021-05-20 z_mu[0]=-1.995
+2026-03-07 23:29:00,458 - INFO -   PCA posterior [800/1510] date=2022-03-07 z_mu[0]=1.991
+2026-03-07 23:29:00,613 - INFO -   PCA posterior [1000/1510] date=2022-12-20 z_mu[0]=-0.099
+2026-03-07 23:29:00,764 - INFO -   PCA posterior [1200/1510] date=2023-10-09 z_mu[0]=1.962
+2026-03-07 23:29:00,919 - INFO -   PCA posterior [1400/1510] date=2024-07-26 z_mu[0]=1.980
+2026-03-07 23:29:01,091 - INFO - ✅ Saved regime posteriors → research/outputs/cache/regime_posteriors.parquet (1,510 rows)
+2026-03-07 23:29:01,092 - INFO - Regime label distribution (PCA k-means):
+2026-03-07 23:29:01,092 - INFO -   crisis              :  686 days (45.4%)
+2026-03-07 23:29:01,092 - INFO -   bull_low_vol        :  682 days (45.2%)
+2026-03-07 23:29:01,092 - INFO -   bull_high_vol       :   78 days (5.2%)
+2026-03-07 23:29:01,092 - INFO -   bear                :   64 days (4.2%)
+2026-03-07 23:29:01,092 - INFO - Precompute Stage 1 complete. Run precompute_alpha_signals.py next.
+[0;32m[OK][0m Stage 1: Regime Posterior Precomputation complete.
+
+[0;36m══════════════════════════════════════════[0m
+[0;36m  Stage 2: Alpha Signal Precomputation[0m
+[0;36m══════════════════════════════════════════[0m
+2026-03-07 23:29:01,405 - INFO - ══════ Fortress v5 — Alpha Signal Precomputation ══════
+2026-03-07 23:29:01,405 - INFO - Loading cached market data...
+2026-03-07 23:29:01,422 - INFO - Loading cached regime posteriors...
+2026-03-07 23:29:01,426 - INFO - Market data: 1510 days × 25 assets | Regime posteriors: 1510 rows
+2026-03-07 23:29:01,429 - INFO - Aligned dataset: 1510 trading days
+2026-03-07 23:29:01,429 - INFO - GATv2 weights not found at models/weights/gat_alpha_latest.pt. Running in Surrogate Mode.
+2026-03-07 23:29:01,429 - INFO - Surrogate Mode: computing 5-factor regime-conditioned alpha model...
+2026-03-07 23:29:01,429 - INFO - Computing Factor 1: Cross-Sectional Momentum (12-1 month)...
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:150: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '-0.9999999991666666' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(momentum.loc[date].values, descending=False)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:150: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '-0.9166666659027777' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(momentum.loc[date].values, descending=False)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:150: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '-0.8333333326388889' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(momentum.loc[date].values, descending=False)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:150: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '-0.749999999375' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(momentum.loc[date].values, descending=False)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:150: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '-0.666666666111111' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(momentum.loc[date].values, descending=False)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:150: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '-0.5833333328472222' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(momentum.loc[date].values, descending=False)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:150: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '-0.4999999995833333' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(momentum.loc[date].values, descending=False)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:150: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '-0.41666666631944443' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(momentum.loc[date].values, descending=False)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:150: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '-0.3333333330555555' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(momentum.loc[date].values, descending=False)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:150: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '-0.24999999979166665' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(momentum.loc[date].values, descending=False)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:150: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '-0.16666666652777776' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(momentum.loc[date].values, descending=False)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:150: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '-0.08333333326388888' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(momentum.loc[date].values, descending=False)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:150: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '0.08333333326388888' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(momentum.loc[date].values, descending=False)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:150: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '0.16666666652777776' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(momentum.loc[date].values, descending=False)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:150: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '0.24999999979166665' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(momentum.loc[date].values, descending=False)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:150: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '0.3333333330555555' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(momentum.loc[date].values, descending=False)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:150: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '0.41666666631944443' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(momentum.loc[date].values, descending=False)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:150: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '0.4999999995833333' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(momentum.loc[date].values, descending=False)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:150: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '0.5833333328472222' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(momentum.loc[date].values, descending=False)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:150: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '0.666666666111111' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(momentum.loc[date].values, descending=False)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:150: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '0.749999999375' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(momentum.loc[date].values, descending=False)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:150: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '0.8333333326388889' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(momentum.loc[date].values, descending=False)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:150: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '0.9166666659027777' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(momentum.loc[date].values, descending=False)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:150: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '0.9999999991666666' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(momentum.loc[date].values, descending=False)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:150: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '-0.5833333328472222' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(momentum.loc[date].values, descending=False)
+2026-03-07 23:29:03,120 - INFO - Computing Factor 2: Short-Term Reversal (1 month)...
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:169: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '0.9999999991666666' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(cum_ret_21.loc[date].values, descending=True)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:169: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '0.9166666659027777' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(cum_ret_21.loc[date].values, descending=True)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:169: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '0.8333333326388889' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(cum_ret_21.loc[date].values, descending=True)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:169: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '0.749999999375' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(cum_ret_21.loc[date].values, descending=True)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:169: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '0.666666666111111' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(cum_ret_21.loc[date].values, descending=True)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:169: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '0.5833333328472222' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(cum_ret_21.loc[date].values, descending=True)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:169: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '0.4999999995833333' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(cum_ret_21.loc[date].values, descending=True)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:169: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '0.41666666631944443' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(cum_ret_21.loc[date].values, descending=True)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:169: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '0.3333333330555555' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(cum_ret_21.loc[date].values, descending=True)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:169: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '0.24999999979166665' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(cum_ret_21.loc[date].values, descending=True)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:169: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '0.16666666652777776' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(cum_ret_21.loc[date].values, descending=True)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:169: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '0.08333333326388888' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(cum_ret_21.loc[date].values, descending=True)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:169: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '-0.08333333326388888' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(cum_ret_21.loc[date].values, descending=True)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:169: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '-0.16666666652777776' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(cum_ret_21.loc[date].values, descending=True)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:169: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '-0.24999999979166665' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(cum_ret_21.loc[date].values, descending=True)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:169: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '-0.3333333330555555' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(cum_ret_21.loc[date].values, descending=True)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:169: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '-0.41666666631944443' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(cum_ret_21.loc[date].values, descending=True)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:169: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '-0.4999999995833333' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(cum_ret_21.loc[date].values, descending=True)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:169: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '-0.5833333328472222' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(cum_ret_21.loc[date].values, descending=True)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:169: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '-0.666666666111111' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(cum_ret_21.loc[date].values, descending=True)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:169: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '-0.749999999375' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(cum_ret_21.loc[date].values, descending=True)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:169: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '-0.8333333326388889' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(cum_ret_21.loc[date].values, descending=True)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:169: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '-0.9166666659027777' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(cum_ret_21.loc[date].values, descending=True)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:169: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '-0.9999999991666666' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(cum_ret_21.loc[date].values, descending=True)
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:169: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '0.5833333328472222' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = _cross_sectional_rank(cum_ret_21.loc[date].values, descending=True)
+2026-03-07 23:29:04,831 - INFO - Computing Factor 3: Low-Volatility Anomaly (63-day realised vol)...
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:196: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '0.9999999991666666' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = r
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:196: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '0.9166666659027777' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = r
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:196: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '0.8333333326388889' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = r
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:196: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '0.749999999375' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = r
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:196: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '0.666666666111111' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = r
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:196: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '0.5833333328472222' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = r
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:196: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '0.4999999995833333' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = r
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:196: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '0.41666666631944443' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = r
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:196: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '0.3333333330555555' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = r
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:196: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '0.24999999979166665' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = r
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:196: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '0.16666666652777776' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = r
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:196: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '0.08333333326388888' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = r
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:196: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '-0.08333333326388888' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = r
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:196: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '-0.16666666652777776' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = r
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:196: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '-0.24999999979166665' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = r
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:196: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '-0.3333333330555555' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = r
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:196: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '-0.41666666631944443' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = r
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:196: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '-0.4999999995833333' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = r
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:196: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '-0.5833333328472222' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = r
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:196: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '-0.666666666111111' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = r
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:196: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '-0.749999999375' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = r
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:196: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '-0.8333333326388889' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = r
+/home/alexr/fortress_v5/scripts/precompute_alpha_signals.py:196: FutureWarning: Setting an item of incompatible dtype is deprecated and will raise an error in a future version of pandas. Value '0.08333333326388888' has dtype incompatible with float32, please explicitly cast to a compatible dtype first.
+  ranked.loc[date] = r
+2026-03-07 23:29:06,561 - INFO - Computing Factor 4: Fixed-Income Carry (static)...
+2026-03-07 23:29:06,561 - INFO - Computing Factor 5: Regime Tilt + combining all factors...
+2026-03-07 23:29:06,562 - INFO -   [0/1510] 2019-01-02 | z_mu[0]=0.00 | Regime=bull_high_vol | Top: HYG(0.21), LQD(0.09), TLT(0.05) | Bot: SPY(-0.05), QQQ(-0.05), IWM(-0.04)
+2026-03-07 23:29:06,591 - INFO -   [200/1510] 2019-10-17 | z_mu[0]=1.96 | Regime=bull_low_vol | Top: HYG(0.99), QQQ(0.92), XLP(0.92) | Bot: VIXY(-0.99), GLD(-0.86), USO(-0.85)
+2026-03-07 23:29:06,621 - INFO -   [400/1510] 2020-08-04 | z_mu[0]=-1.94 | Regime=crisis | Top: VIXY(0.99), GLD(0.87), SHY(0.84) | Bot: XLK(-0.94), IWM(-0.92), QQQ(-0.91)
+2026-03-07 23:29:06,652 - INFO -   [600/1510] 2021-05-20 | z_mu[0]=-2.00 | Regime=crisis | Top: VIXY(0.99), GLD(0.89), SHY(0.86) | Bot: IWM(-0.93), VNQ(-0.93), XLK(-0.91)
+2026-03-07 23:29:06,682 - INFO -   [800/1510] 2022-03-07 | z_mu[0]=1.99 | Regime=bull_low_vol | Top: XLE(0.94), VNQ(0.94), XLK(0.91) | Bot: VIXY(-0.99), SHY(-0.89), GLD(-0.85)
+2026-03-07 23:29:06,711 - INFO -   [1000/1510] 2022-12-20 | z_mu[0]=-0.10 | Regime=bull_high_vol | Top: GLD(0.58), PDBC(0.50), SLV(0.44) | Bot: IWM(-0.55), XLF(-0.54), QQQ(-0.36)
+2026-03-07 23:29:06,742 - INFO -   [1200/1510] 2023-10-09 | z_mu[0]=1.96 | Regime=bull_low_vol | Top: IWM(0.95), XLK(0.94), EFA(0.94) | Bot: VIXY(-0.99), GLD(-0.91), TLT(-0.91)
+2026-03-07 23:29:06,774 - INFO -   [1400/1510] 2024-07-26 | z_mu[0]=1.98 | Regime=bull_low_vol | Top: HYG(0.98), SPY(0.94), XLK(0.93) | Bot: VIXY(-0.99), GLD(-0.87), USO(-0.85)
+2026-03-07 23:29:06,795 - INFO - ✅ Alpha signals saved → research/outputs/cache/alpha_signals.parquet (1510 rows × 25 assets)
+2026-03-07 23:29:06,795 - INFO - Alpha signal summary (time-averaged per asset):
+2026-03-07 23:29:06,796 - INFO -   LQD   : +██████ (+0.306)
+2026-03-07 23:29:06,796 - INFO -   SHV   : +████ (+0.250)
+2026-03-07 23:29:06,796 - INFO -   BIL   : +████ (+0.250)
+2026-03-07 23:29:06,796 - INFO -   HYG   : +██ (+0.136)
+2026-03-07 23:29:06,796 - INFO -   SHY   : +█ (+0.079)
+2026-03-07 23:29:06,796 - INFO -   IEF   : +█ (+0.060)
+2026-03-07 23:29:06,796 - INFO -   XLP   : +█ (+0.056)
+2026-03-07 23:29:06,796 - INFO -   XLV   : + (+0.034)
+2026-03-07 23:29:06,796 - INFO -   VTV   : + (+0.025)
+2026-03-07 23:29:06,796 - INFO -   EFA   : + (+0.019)
+2026-03-07 23:29:06,796 - INFO -   SPY   : + (+0.008)
+2026-03-07 23:29:06,796 - INFO -   PDBC  : + (+0.006)
+2026-03-07 23:29:06,796 - INFO -   VIXY  : + (+0.005)
+2026-03-07 23:29:06,796 - INFO -   XLI   : + (+0.004)
+2026-03-07 23:29:06,796 - INFO -   GLD   : - (-0.001)
+2026-03-07 23:29:06,796 - INFO -   TLT   : - (-0.001)
+2026-03-07 23:29:06,796 - INFO -   XLK   : - (-0.029)
+2026-03-07 23:29:06,796 - INFO -   VNQ   : - (-0.032)
+2026-03-07 23:29:06,796 - INFO -   QQQ   : - (-0.049)
+2026-03-07 23:29:06,796 - INFO -   IWM   : -█ (-0.078)
+2026-03-07 23:29:06,796 - INFO -   XLF   : -█ (-0.087)
+2026-03-07 23:29:06,796 - INFO -   EEM   : -█ (-0.093)
+2026-03-07 23:29:06,796 - INFO -   SLV   : -██ (-0.149)
+2026-03-07 23:29:06,796 - INFO -   XLE   : -███ (-0.169)
+2026-03-07 23:29:06,796 - INFO -   USO   : -███ (-0.189)
+2026-03-07 23:29:06,796 - INFO - Precompute Stage 2 complete. Run run_standalone_backtest.py next.
+[0;32m[OK][0m Stage 2: Alpha Signal Precomputation complete.
+
+[0;36m══════════════════════════════════════════[0m
+[0;36m  Stage 3: Event-Driven Standalone Backtest[0m
+[0;36m══════════════════════════════════════════[0m
+2026-03-07 23:29:07,292 - INFO - ══════ Fortress v5 — Standalone Backtest v3 (7 bugs patched) ══════
+2026-03-07 23:29:07,319 - INFO - Loaded data | prices: 1510d | returns: 1510d | regime: 1510d | alpha: 1510d
+2026-03-07 23:29:07,319 - INFO - Date ranges | prices: 2019-01-02 → 2024-12-31 | regime: 2019-01-02 → 2024-12-31
+2026-03-07 23:29:07,320 - INFO - Backtest window: 2019-07-03 → 2024-12-31 (1384 total days, warmup=126d, recording from 2020-01-02)
+2026-03-07 23:29:07,911 - CRITICAL - HALT triggered 2020-11-20: DD=-20.03%
+2026-03-07 23:29:07,915 - INFO - 2021-02-19: Halt recovery — entering ramp-in.
+2026-03-07 23:29:07,917 - WARNING - 2021-02-22: Ramp-in breach DD=-19.11%. Back to mandatory BIL.
+2026-03-07 23:29:07,922 - INFO - 2021-05-18: Halt recovery — entering ramp-in.
+2026-03-07 23:29:07,924 - WARNING - 2021-05-19: Ramp-in breach DD=-18.09%. Back to mandatory BIL.
+2026-03-07 23:29:07,928 - INFO - 2021-08-13: Halt recovery — entering ramp-in.
+2026-03-07 23:29:07,931 - WARNING - 2021-08-16: Ramp-in breach DD=-16.93%. Back to mandatory BIL.
+2026-03-07 23:29:07,935 - INFO - 2021-11-09: Halt recovery — entering ramp-in.
+2026-03-07 23:29:07,937 - WARNING - 2021-11-10: Ramp-in breach DD=-15.75%. Back to mandatory BIL.
+2026-03-07 23:29:07,942 - INFO - 2022-02-07: Halt recovery — entering ramp-in.
+2026-03-07 23:29:07,944 - WARNING - 2022-02-08: Ramp-in breach DD=-14.74%. Back to mandatory BIL.
+2026-03-07 23:29:07,948 - INFO - 2022-05-05: Halt recovery — entering ramp-in.
+2026-03-07 23:29:07,951 - WARNING - 2022-05-06: Ramp-in breach DD=-13.66%. Back to mandatory BIL.
+2026-03-07 23:29:07,955 - INFO - 2022-08-03: Halt recovery — entering ramp-in.
+2026-03-07 23:29:07,957 - WARNING - 2022-08-04: Ramp-in breach DD=-12.72%. Back to mandatory BIL.
+2026-03-07 23:29:07,961 - INFO - 2022-10-28: Halt recovery — entering ramp-in.
+2026-03-07 23:29:07,963 - WARNING - 2022-10-31: Ramp-in breach DD=-11.65%. Back to mandatory BIL.
+2026-03-07 23:29:07,967 - INFO - 2023-01-27: Halt recovery — entering ramp-in.
+2026-03-07 23:29:07,971 - WARNING - 2023-01-30: Ramp-in breach DD=-10.59%. Back to mandatory BIL.
+2026-03-07 23:29:07,975 - INFO - 2023-04-26: Halt recovery — entering ramp-in.
+2026-03-07 23:29:08,002 - WARNING - 2023-05-15: Ramp-in breach DD=-10.27%. Back to mandatory BIL.
+2026-03-07 23:29:08,006 - INFO - 2023-08-10: Halt recovery — entering ramp-in.
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:435: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  fx = wrapped_fun(x)
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:439: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  g = append(wrapped_grad(x), 0.0)
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:493: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  a_eq = vstack([con['jac'](x, *con['args'])
+2026-03-07 23:29:08,151 - INFO - 2023-11-03: Ramp-in complete. Resuming full active trading.
+2026-03-07 23:29:08,858 - INFO - ══ TEARSHEET ══
+2026-03-07 23:29:08,858 - INFO -   CAGR                         +1.16%
+2026-03-07 23:29:08,858 - INFO -   Ann. Volatility              6.84%
+2026-03-07 23:29:08,858 - INFO -   Sharpe Ratio                 -0.656
+2026-03-07 23:29:08,858 - INFO -   Sortino Ratio                -0.646
+2026-03-07 23:29:08,858 - INFO -   Calmar Ratio                 0.058
+2026-03-07 23:29:08,858 - INFO -   Max Drawdown                 -20.03%
+2026-03-07 23:29:08,858 - INFO -   Max DD Duration              1152 days
+2026-03-07 23:29:08,858 - INFO -   VaR-95 (daily)               -0.64%
+2026-03-07 23:29:08,858 - INFO -   CVaR-95 (daily)              -1.10%
+2026-03-07 23:29:08,858 - INFO -   Hit Rate                     19.08%
+2026-03-07 23:29:08,858 - INFO -   Avg Daily Turnover           0.0061%
+2026-03-07 23:29:08,858 - INFO -   PSR (SR>0)                   0.0000
+2026-03-07 23:29:08,858 - INFO -   Skewness                     1.357
+2026-03-07 23:29:08,858 - INFO -   Excess Kurtosis              34.539
+2026-03-07 23:29:08,858 - INFO -   Active Trading Days          47.5%
+2026-03-07 23:29:08,858 - INFO -   Final NAV                    $105,915.16
+2026-03-07 23:29:08,858 - INFO -   Trading Days                 1258
+2026-03-07 23:29:08,872 - INFO - ✅ Tearsheet → research/outputs/backtest_tearsheet.csv (1258 rows)
+2026-03-07 23:29:08,872 - INFO - Running walk-forward validation...
+2026-03-07 23:29:08,873 - INFO - Backtest window: 2019-01-02 → 2020-07-01 (378 total days, warmup=21d, recording from 2019-01-02)
+2026-03-07 23:29:09,771 - INFO - ══ TEARSHEET ══
+2026-03-07 23:29:09,771 - INFO -   CAGR                         -5.24%
+2026-03-07 23:29:09,771 - INFO -   Ann. Volatility              9.07%
+2026-03-07 23:29:09,771 - INFO -   Sharpe Ratio                 -1.099
+2026-03-07 23:29:09,771 - INFO -   Sortino Ratio                -1.473
+2026-03-07 23:29:09,771 - INFO -   Calmar Ratio                 -0.306
+2026-03-07 23:29:09,771 - INFO -   Max Drawdown                 -17.15%
+2026-03-07 23:29:09,771 - INFO -   Max DD Duration              351 days
+2026-03-07 23:29:09,772 - INFO -   VaR-95 (daily)               -0.98%
+2026-03-07 23:29:09,772 - INFO -   CVaR-95 (daily)              -1.45%
+2026-03-07 23:29:09,772 - INFO -   Hit Rate                     44.71%
+2026-03-07 23:29:09,772 - INFO -   Avg Daily Turnover           0.0129%
+2026-03-07 23:29:09,772 - INFO -   PSR (SR>0)                   0.0000
+2026-03-07 23:29:09,772 - INFO -   Skewness                     -0.365
+2026-03-07 23:29:09,772 - INFO -   Excess Kurtosis              1.777
+2026-03-07 23:29:09,772 - INFO -   Active Trading Days          94.4%
+2026-03-07 23:29:09,772 - INFO -   Final NAV                    $92,240.46
+2026-03-07 23:29:09,772 - INFO -   Trading Days                 378
+2026-03-07 23:29:09,772 - INFO - Backtest window: 2020-06-03 → 2020-12-30 (147 total days, warmup=21d, recording from 2020-07-02)
+2026-03-07 23:29:10,090 - INFO - ══ TEARSHEET ══
+2026-03-07 23:29:10,090 - INFO -   CAGR                         -32.02%
+2026-03-07 23:29:10,090 - INFO -   Ann. Volatility              15.88%
+2026-03-07 23:29:10,090 - INFO -   Sharpe Ratio                 -2.718
+2026-03-07 23:29:10,090 - INFO -   Sortino Ratio                -4.164
+2026-03-07 23:29:10,090 - INFO -   Calmar Ratio                 -1.615
+2026-03-07 23:29:10,090 - INFO -   Max Drawdown                 -19.82%
+2026-03-07 23:29:10,090 - INFO -   Max DD Duration              125 days
+2026-03-07 23:29:10,090 - INFO -   VaR-95 (daily)               -1.73%
+2026-03-07 23:29:10,090 - INFO -   CVaR-95 (daily)              -2.18%
+2026-03-07 23:29:10,090 - INFO -   Hit Rate                     38.10%
+2026-03-07 23:29:10,090 - INFO -   Avg Daily Turnover           0.0128%
+2026-03-07 23:29:10,090 - INFO -   PSR (SR>0)                   0.0000
+2026-03-07 23:29:10,090 - INFO -   Skewness                     1.438
+2026-03-07 23:29:10,090 - INFO -   Excess Kurtosis              9.937
+2026-03-07 23:29:10,090 - INFO -   Active Trading Days          100.0%
+2026-03-07 23:29:10,090 - INFO -   Final NAV                    $82,450.76
+2026-03-07 23:29:10,090 - INFO -   Trading Days                 126
+2026-03-07 23:29:10,090 - INFO -   F1: IS SR=-1.099 | OOS SR=-2.718  CAGR=-32.02%  MaxDD=-19.82%
+2026-03-07 23:29:10,091 - INFO - Backtest window: 2019-01-02 → 2020-12-30 (504 total days, warmup=21d, recording from 2019-01-02)
+2026-03-07 23:29:11,072 - CRITICAL - HALT triggered 2020-08-13: DD=-20.16%
+2026-03-07 23:29:11,077 - INFO - 2020-11-06: Halt recovery — entering ramp-in.
+2026-03-07 23:29:11,079 - WARNING - 2020-11-09: Ramp-in breach DD=-19.17%. Back to mandatory BIL.
+2026-03-07 23:29:11,084 - INFO - ══ TEARSHEET ══
+2026-03-07 23:29:11,085 - INFO -   CAGR                         -8.75%
+2026-03-07 23:29:11,085 - INFO -   Ann. Volatility              8.98%
+2026-03-07 23:29:11,085 - INFO -   Sharpe Ratio                 -1.535
+2026-03-07 23:29:11,085 - INFO -   Sortino Ratio                -1.740
+2026-03-07 23:29:11,085 - INFO -   Calmar Ratio                 -0.434
+2026-03-07 23:29:11,085 - INFO -   Max Drawdown                 -20.16%
+2026-03-07 23:29:11,085 - INFO -   Max DD Duration              477 days
+2026-03-07 23:29:11,085 - INFO -   VaR-95 (daily)               -1.00%
+2026-03-07 23:29:11,085 - INFO -   CVaR-95 (daily)              -1.56%
+2026-03-07 23:29:11,085 - INFO -   Hit Rate                     35.52%
+2026-03-07 23:29:11,085 - INFO -   Avg Daily Turnover           0.0103%
+2026-03-07 23:29:11,085 - INFO -   PSR (SR>0)                   0.0000
+2026-03-07 23:29:11,085 - INFO -   Skewness                     -0.655
+2026-03-07 23:29:11,085 - INFO -   Excess Kurtosis              4.835
+2026-03-07 23:29:11,085 - INFO -   Active Trading Days          77.0%
+2026-03-07 23:29:11,085 - INFO -   Final NAV                    $83,273.40
+2026-03-07 23:29:11,085 - INFO -   Trading Days                 504
+2026-03-07 23:29:11,085 - INFO - Backtest window: 2020-12-01 → 2021-07-01 (147 total days, warmup=21d, recording from 2020-12-31)
+2026-03-07 23:29:11,373 - INFO - ══ TEARSHEET ══
+2026-03-07 23:29:11,373 - INFO -   CAGR                         +39.87%
+2026-03-07 23:29:11,373 - INFO -   Ann. Volatility              10.46%
+2026-03-07 23:29:11,373 - INFO -   Sharpe Ratio                 2.704
+2026-03-07 23:29:11,373 - INFO -   Sortino Ratio                4.841
+2026-03-07 23:29:11,373 - INFO -   Calmar Ratio                 8.530
+2026-03-07 23:29:11,373 - INFO -   Max Drawdown                 -4.67%
+2026-03-07 23:29:11,373 - INFO -   Max DD Duration              25 days
+2026-03-07 23:29:11,373 - INFO -   VaR-95 (daily)               -0.81%
+2026-03-07 23:29:11,373 - INFO -   CVaR-95 (daily)              -1.16%
+2026-03-07 23:29:11,373 - INFO -   Hit Rate                     53.97%
+2026-03-07 23:29:11,373 - INFO -   Avg Daily Turnover           0.0154%
+2026-03-07 23:29:11,373 - INFO -   PSR (SR>0)                   1.0000
+2026-03-07 23:29:11,373 - INFO -   Skewness                     0.452
+2026-03-07 23:29:11,373 - INFO -   Excess Kurtosis              0.936
+2026-03-07 23:29:11,373 - INFO -   Active Trading Days          100.0%
+2026-03-07 23:29:11,373 - INFO -   Final NAV                    $118,266.37
+2026-03-07 23:29:11,373 - INFO -   Trading Days                 126
+2026-03-07 23:29:11,373 - INFO -   F2: IS SR=-1.535 | OOS SR=2.704  CAGR=39.87%  MaxDD=-4.67%
+2026-03-07 23:29:11,374 - INFO - Backtest window: 2019-01-02 → 2021-07-01 (630 total days, warmup=21d, recording from 2019-01-02)
+2026-03-07 23:29:12,344 - CRITICAL - HALT triggered 2020-08-13: DD=-20.16%
+2026-03-07 23:29:12,348 - INFO - 2020-11-06: Halt recovery — entering ramp-in.
+2026-03-07 23:29:12,351 - WARNING - 2020-11-09: Ramp-in breach DD=-19.17%. Back to mandatory BIL.
+2026-03-07 23:29:12,354 - INFO - 2021-02-05: Halt recovery — entering ramp-in.
+2026-03-07 23:29:12,359 - WARNING - 2021-02-08: Ramp-in breach DD=-18.21%. Back to mandatory BIL.
+2026-03-07 23:29:12,363 - INFO - 2021-05-05: Halt recovery — entering ramp-in.
+2026-03-07 23:29:12,365 - WARNING - 2021-05-06: Ramp-in breach DD=-17.22%. Back to mandatory BIL.
+2026-03-07 23:29:12,372 - INFO - ══ TEARSHEET ══
+2026-03-07 23:29:12,373 - INFO -   CAGR                         -6.14%
+2026-03-07 23:29:12,373 - INFO -   Ann. Volatility              8.04%
+2026-03-07 23:29:12,373 - INFO -   Sharpe Ratio                 -1.374
+2026-03-07 23:29:12,373 - INFO -   Sortino Ratio                -1.396
+2026-03-07 23:29:12,373 - INFO -   Calmar Ratio                 -0.305
+2026-03-07 23:29:12,373 - INFO -   Max Drawdown                 -20.16%
+2026-03-07 23:29:12,373 - INFO -   Max DD Duration              603 days
+2026-03-07 23:29:12,373 - INFO -   VaR-95 (daily)               -0.86%
+2026-03-07 23:29:12,373 - INFO -   CVaR-95 (daily)              -1.44%
+2026-03-07 23:29:12,373 - INFO -   Hit Rate                     28.41%
+2026-03-07 23:29:12,373 - INFO -   Avg Daily Turnover           0.0083%
+2026-03-07 23:29:12,373 - INFO -   PSR (SR>0)                   0.0000
+2026-03-07 23:29:12,373 - INFO -   Skewness                     -0.794
+2026-03-07 23:29:12,373 - INFO -   Excess Kurtosis              6.823
+2026-03-07 23:29:12,373 - INFO -   Active Trading Days          61.9%
+2026-03-07 23:29:12,373 - INFO -   Final NAV                    $85,344.87
+2026-03-07 23:29:12,373 - INFO -   Trading Days                 630
+2026-03-07 23:29:12,373 - INFO - Backtest window: 2021-06-03 → 2021-12-30 (147 total days, warmup=21d, recording from 2021-07-02)
+2026-03-07 23:29:12,675 - INFO - ══ TEARSHEET ══
+2026-03-07 23:29:12,675 - INFO -   CAGR                         +20.90%
+2026-03-07 23:29:12,675 - INFO -   Ann. Volatility              11.96%
+2026-03-07 23:29:12,675 - INFO -   Sharpe Ratio                 1.160
+2026-03-07 23:29:12,675 - INFO -   Sortino Ratio                2.028
+2026-03-07 23:29:12,675 - INFO -   Calmar Ratio                 2.906
+2026-03-07 23:29:12,675 - INFO -   Max Drawdown                 -7.19%
+2026-03-07 23:29:12,675 - INFO -   Max DD Duration              35 days
+2026-03-07 23:29:12,675 - INFO -   VaR-95 (daily)               -1.06%
+2026-03-07 23:29:12,675 - INFO -   CVaR-95 (daily)              -1.40%
+2026-03-07 23:29:12,675 - INFO -   Hit Rate                     51.59%
+2026-03-07 23:29:12,675 - INFO -   Avg Daily Turnover           0.0143%
+2026-03-07 23:29:12,675 - INFO -   PSR (SR>0)                   1.0000
+2026-03-07 23:29:12,675 - INFO -   Skewness                     0.928
+2026-03-07 23:29:12,675 - INFO -   Excess Kurtosis              2.767
+2026-03-07 23:29:12,675 - INFO -   Active Trading Days          100.0%
+2026-03-07 23:29:12,675 - INFO -   Final NAV                    $109,955.31
+2026-03-07 23:29:12,675 - INFO -   Trading Days                 126
+2026-03-07 23:29:12,676 - INFO -   F3: IS SR=-1.374 | OOS SR=1.160  CAGR=20.90%  MaxDD=-7.19%
+2026-03-07 23:29:12,676 - INFO - Backtest window: 2019-01-02 → 2021-12-30 (756 total days, warmup=21d, recording from 2019-01-02)
+2026-03-07 23:29:13,645 - CRITICAL - HALT triggered 2020-08-13: DD=-20.16%
+2026-03-07 23:29:13,649 - INFO - 2020-11-06: Halt recovery — entering ramp-in.
+2026-03-07 23:29:13,651 - WARNING - 2020-11-09: Ramp-in breach DD=-19.17%. Back to mandatory BIL.
+2026-03-07 23:29:13,655 - INFO - 2021-02-05: Halt recovery — entering ramp-in.
+2026-03-07 23:29:13,658 - WARNING - 2021-02-08: Ramp-in breach DD=-18.21%. Back to mandatory BIL.
+2026-03-07 23:29:13,662 - INFO - 2021-05-05: Halt recovery — entering ramp-in.
+2026-03-07 23:29:13,665 - WARNING - 2021-05-06: Ramp-in breach DD=-17.22%. Back to mandatory BIL.
+2026-03-07 23:29:13,669 - INFO - 2021-08-02: Halt recovery — entering ramp-in.
+2026-03-07 23:29:13,673 - WARNING - 2021-08-03: Ramp-in breach DD=-16.04%. Back to mandatory BIL.
+2026-03-07 23:29:13,676 - INFO - 2021-10-27: Halt recovery — entering ramp-in.
+2026-03-07 23:29:13,678 - WARNING - 2021-10-28: Ramp-in breach DD=-14.85%. Back to mandatory BIL.
+2026-03-07 23:29:13,685 - INFO - ══ TEARSHEET ══
+2026-03-07 23:29:13,685 - INFO -   CAGR                         -4.22%
+2026-03-07 23:29:13,685 - INFO -   Ann. Volatility              7.34%
+2026-03-07 23:29:13,685 - INFO -   Sharpe Ratio                 -1.257
+2026-03-07 23:29:13,685 - INFO -   Sortino Ratio                -1.167
+2026-03-07 23:29:13,685 - INFO -   Calmar Ratio                 -0.209
+2026-03-07 23:29:13,685 - INFO -   Max Drawdown                 -20.16%
+2026-03-07 23:29:13,685 - INFO -   Max DD Duration              729 days
+2026-03-07 23:29:13,685 - INFO -   VaR-95 (daily)               -0.76%
+2026-03-07 23:29:13,685 - INFO -   CVaR-95 (daily)              -1.34%
+2026-03-07 23:29:13,685 - INFO -   Hit Rate                     23.68%
+2026-03-07 23:29:13,685 - INFO -   Avg Daily Turnover           0.0069%
+2026-03-07 23:29:13,685 - INFO -   PSR (SR>0)                   0.0000
+2026-03-07 23:29:13,685 - INFO -   Skewness                     -0.915
+2026-03-07 23:29:13,685 - INFO -   Excess Kurtosis              8.814
+2026-03-07 23:29:13,685 - INFO -   Active Trading Days          51.9%
+2026-03-07 23:29:13,685 - INFO -   Final NAV                    $87,863.27
+2026-03-07 23:29:13,685 - INFO -   Trading Days                 756
+2026-03-07 23:29:13,685 - INFO - Backtest window: 2021-12-01 → 2022-07-01 (147 total days, warmup=21d, recording from 2021-12-31)
+2026-03-07 23:29:13,986 - INFO - ══ TEARSHEET ══
+2026-03-07 23:29:13,986 - INFO -   CAGR                         -1.35%
+2026-03-07 23:29:13,986 - INFO -   Ann. Volatility              10.48%
+2026-03-07 23:29:13,986 - INFO -   Sharpe Ratio                 -0.635
+2026-03-07 23:29:13,986 - INFO -   Sortino Ratio                -1.083
+2026-03-07 23:29:13,986 - INFO -   Calmar Ratio                 -0.129
+2026-03-07 23:29:13,986 - INFO -   Max Drawdown                 -10.46%
+2026-03-07 23:29:13,986 - INFO -   Max DD Duration              71 days
+2026-03-07 23:29:13,986 - INFO -   VaR-95 (daily)               -0.87%
+2026-03-07 23:29:13,986 - INFO -   CVaR-95 (daily)              -1.31%
+2026-03-07 23:29:13,986 - INFO -   Hit Rate                     42.06%
+2026-03-07 23:29:13,986 - INFO -   Avg Daily Turnover           0.0114%
+2026-03-07 23:29:13,986 - INFO -   PSR (SR>0)                   0.0000
+2026-03-07 23:29:13,986 - INFO -   Skewness                     0.401
+2026-03-07 23:29:13,986 - INFO -   Excess Kurtosis              1.351
+2026-03-07 23:29:13,986 - INFO -   Active Trading Days          100.0%
+2026-03-07 23:29:13,986 - INFO -   Final NAV                    $99,320.62
+2026-03-07 23:29:13,986 - INFO -   Trading Days                 126
+2026-03-07 23:29:13,987 - INFO -   F4: IS SR=-1.257 | OOS SR=-0.635  CAGR=-1.35%  MaxDD=-10.46%
+2026-03-07 23:29:13,987 - INFO - Backtest window: 2019-01-02 → 2022-07-01 (882 total days, warmup=21d, recording from 2019-01-02)
+2026-03-07 23:29:14,982 - CRITICAL - HALT triggered 2020-08-13: DD=-20.16%
+2026-03-07 23:29:14,987 - INFO - 2020-11-06: Halt recovery — entering ramp-in.
+2026-03-07 23:29:14,990 - WARNING - 2020-11-09: Ramp-in breach DD=-19.17%. Back to mandatory BIL.
+2026-03-07 23:29:14,994 - INFO - 2021-02-05: Halt recovery — entering ramp-in.
+2026-03-07 23:29:14,997 - WARNING - 2021-02-08: Ramp-in breach DD=-18.21%. Back to mandatory BIL.
+2026-03-07 23:29:15,002 - INFO - 2021-05-05: Halt recovery — entering ramp-in.
+2026-03-07 23:29:15,005 - WARNING - 2021-05-06: Ramp-in breach DD=-17.22%. Back to mandatory BIL.
+2026-03-07 23:29:15,009 - INFO - 2021-08-02: Halt recovery — entering ramp-in.
+2026-03-07 23:29:15,012 - WARNING - 2021-08-03: Ramp-in breach DD=-16.04%. Back to mandatory BIL.
+2026-03-07 23:29:15,016 - INFO - 2021-10-27: Halt recovery — entering ramp-in.
+2026-03-07 23:29:15,018 - WARNING - 2021-10-28: Ramp-in breach DD=-14.85%. Back to mandatory BIL.
+2026-03-07 23:29:15,022 - INFO - 2022-01-25: Halt recovery — entering ramp-in.
+2026-03-07 23:29:15,024 - WARNING - 2022-01-26: Ramp-in breach DD=-13.83%. Back to mandatory BIL.
+2026-03-07 23:29:15,028 - INFO - 2022-04-22: Halt recovery — entering ramp-in.
+2026-03-07 23:29:15,031 - WARNING - 2022-04-25: Ramp-in breach DD=-12.70%. Back to mandatory BIL.
+2026-03-07 23:29:15,037 - INFO - ══ TEARSHEET ══
+2026-03-07 23:29:15,037 - INFO -   CAGR                         -2.92%
+2026-03-07 23:29:15,037 - INFO -   Ann. Volatility              6.80%
+2026-03-07 23:29:15,037 - INFO -   Sharpe Ratio                 -1.165
+2026-03-07 23:29:15,037 - INFO -   Sortino Ratio                -1.003
+2026-03-07 23:29:15,037 - INFO -   Calmar Ratio                 -0.145
+2026-03-07 23:29:15,038 - INFO -   Max Drawdown                 -20.16%
+2026-03-07 23:29:15,038 - INFO -   Max DD Duration              855 days
+2026-03-07 23:29:15,038 - INFO -   VaR-95 (daily)               -0.70%
+2026-03-07 23:29:15,038 - INFO -   CVaR-95 (daily)              -1.24%
+2026-03-07 23:29:15,038 - INFO -   Hit Rate                     20.29%
+2026-03-07 23:29:15,038 - INFO -   Avg Daily Turnover           0.0060%
+2026-03-07 23:29:15,038 - INFO -   PSR (SR>0)                   0.0000
+2026-03-07 23:29:15,038 - INFO -   Skewness                     -1.023
+2026-03-07 23:29:15,038 - INFO -   Excess Kurtosis              10.807
+2026-03-07 23:29:15,038 - INFO -   Active Trading Days          44.7%
+2026-03-07 23:29:15,038 - INFO -   Final NAV                    $90,147.97
+2026-03-07 23:29:15,038 - INFO -   Trading Days                 882
+2026-03-07 23:29:15,038 - INFO - Backtest window: 2022-06-02 → 2022-12-30 (147 total days, warmup=21d, recording from 2022-07-05)
+2026-03-07 23:29:15,318 - INFO - ══ TEARSHEET ══
+2026-03-07 23:29:15,318 - INFO -   CAGR                         -0.23%
+2026-03-07 23:29:15,319 - INFO -   Ann. Volatility              10.09%
+2026-03-07 23:29:15,319 - INFO -   Sharpe Ratio                 -0.551
+2026-03-07 23:29:15,319 - INFO -   Sortino Ratio                -0.907
+2026-03-07 23:29:15,319 - INFO -   Calmar Ratio                 -0.047
+2026-03-07 23:29:15,319 - INFO -   Max Drawdown                 -4.96%
+2026-03-07 23:29:15,319 - INFO -   Max DD Duration              49 days
+2026-03-07 23:29:15,319 - INFO -   VaR-95 (daily)               -0.94%
+2026-03-07 23:29:15,319 - INFO -   CVaR-95 (daily)              -1.29%
+2026-03-07 23:29:15,319 - INFO -   Hit Rate                     43.65%
+2026-03-07 23:29:15,319 - INFO -   Avg Daily Turnover           0.0136%
+2026-03-07 23:29:15,319 - INFO -   PSR (SR>0)                   0.0000
+2026-03-07 23:29:15,319 - INFO -   Skewness                     0.132
+2026-03-07 23:29:15,319 - INFO -   Excess Kurtosis              0.543
+2026-03-07 23:29:15,319 - INFO -   Active Trading Days          100.0%
+2026-03-07 23:29:15,319 - INFO -   Final NAV                    $99,882.95
+2026-03-07 23:29:15,319 - INFO -   Trading Days                 126
+2026-03-07 23:29:15,319 - INFO -   F5: IS SR=-1.165 | OOS SR=-0.551  CAGR=-0.23%  MaxDD=-4.96%
+2026-03-07 23:29:15,320 - INFO - Backtest window: 2019-01-02 → 2022-12-30 (1008 total days, warmup=21d, recording from 2019-01-02)
+2026-03-07 23:29:16,291 - CRITICAL - HALT triggered 2020-08-13: DD=-20.16%
+2026-03-07 23:29:16,295 - INFO - 2020-11-06: Halt recovery — entering ramp-in.
+2026-03-07 23:29:16,298 - WARNING - 2020-11-09: Ramp-in breach DD=-19.17%. Back to mandatory BIL.
+2026-03-07 23:29:16,303 - INFO - 2021-02-05: Halt recovery — entering ramp-in.
+2026-03-07 23:29:16,306 - WARNING - 2021-02-08: Ramp-in breach DD=-18.21%. Back to mandatory BIL.
+2026-03-07 23:29:16,310 - INFO - 2021-05-05: Halt recovery — entering ramp-in.
+2026-03-07 23:29:16,313 - WARNING - 2021-05-06: Ramp-in breach DD=-17.22%. Back to mandatory BIL.
+2026-03-07 23:29:16,319 - INFO - 2021-08-02: Halt recovery — entering ramp-in.
+2026-03-07 23:29:16,322 - WARNING - 2021-08-03: Ramp-in breach DD=-16.04%. Back to mandatory BIL.
+2026-03-07 23:29:16,325 - INFO - 2021-10-27: Halt recovery — entering ramp-in.
+2026-03-07 23:29:16,327 - WARNING - 2021-10-28: Ramp-in breach DD=-14.85%. Back to mandatory BIL.
+2026-03-07 23:29:16,330 - INFO - 2022-01-25: Halt recovery — entering ramp-in.
+2026-03-07 23:29:16,333 - WARNING - 2022-01-26: Ramp-in breach DD=-13.83%. Back to mandatory BIL.
+2026-03-07 23:29:16,337 - INFO - 2022-04-22: Halt recovery — entering ramp-in.
+2026-03-07 23:29:16,340 - WARNING - 2022-04-25: Ramp-in breach DD=-12.70%. Back to mandatory BIL.
+2026-03-07 23:29:16,344 - INFO - 2022-07-21: Halt recovery — entering ramp-in.
+2026-03-07 23:29:16,347 - WARNING - 2022-07-22: Ramp-in breach DD=-11.69%. Back to mandatory BIL.
+2026-03-07 23:29:16,351 - INFO - 2022-10-17: Halt recovery — entering ramp-in.
+2026-03-07 23:29:16,353 - WARNING - 2022-10-18: Ramp-in breach DD=-10.65%. Back to mandatory BIL.
+2026-03-07 23:29:16,360 - INFO - ══ TEARSHEET ══
+2026-03-07 23:29:16,360 - INFO -   CAGR                         -1.97%
+2026-03-07 23:29:16,360 - INFO -   Ann. Volatility              6.36%
+2026-03-07 23:29:16,360 - INFO -   Sharpe Ratio                 -1.092
+2026-03-07 23:29:16,360 - INFO -   Sortino Ratio                -0.880
+2026-03-07 23:29:16,360 - INFO -   Calmar Ratio                 -0.098
+2026-03-07 23:29:16,360 - INFO -   Max Drawdown                 -20.16%
+2026-03-07 23:29:16,360 - INFO -   Max DD Duration              981 days
+2026-03-07 23:29:16,360 - INFO -   VaR-95 (daily)               -0.64%
+2026-03-07 23:29:16,360 - INFO -   CVaR-95 (daily)              -1.17%
+2026-03-07 23:29:16,360 - INFO -   Hit Rate                     17.76%
+2026-03-07 23:29:16,360 - INFO -   Avg Daily Turnover           0.0052%
+2026-03-07 23:29:16,360 - INFO -   PSR (SR>0)                   0.0000
+2026-03-07 23:29:16,360 - INFO -   Skewness                     -1.121
+2026-03-07 23:29:16,360 - INFO -   Excess Kurtosis              12.801
+2026-03-07 23:29:16,360 - INFO -   Active Trading Days          39.3%
+2026-03-07 23:29:16,360 - INFO -   Final NAV                    $92,340.00
+2026-03-07 23:29:16,360 - INFO -   Trading Days                 1008
+2026-03-07 23:29:16,361 - INFO - Backtest window: 2022-12-01 → 2023-07-05 (147 total days, warmup=21d, recording from 2023-01-03)
+2026-03-07 23:29:16,685 - INFO - ══ TEARSHEET ══
+2026-03-07 23:29:16,685 - INFO -   CAGR                         +20.94%
+2026-03-07 23:29:16,685 - INFO -   Ann. Volatility              14.18%
+2026-03-07 23:29:16,685 - INFO -   Sharpe Ratio                 1.001
+2026-03-07 23:29:16,685 - INFO -   Sortino Ratio                1.528
+2026-03-07 23:29:16,685 - INFO -   Calmar Ratio                 2.337
+2026-03-07 23:29:16,685 - INFO -   Max Drawdown                 -8.96%
+2026-03-07 23:29:16,685 - INFO -   Max DD Duration              41 days
+2026-03-07 23:29:16,685 - INFO -   VaR-95 (daily)               -0.94%
+2026-03-07 23:29:16,685 - INFO -   CVaR-95 (daily)              -1.94%
+2026-03-07 23:29:16,685 - INFO -   Hit Rate                     51.59%
+2026-03-07 23:29:16,685 - INFO -   Avg Daily Turnover           0.0149%
+2026-03-07 23:29:16,685 - INFO -   PSR (SR>0)                   1.0000
+2026-03-07 23:29:16,685 - INFO -   Skewness                     0.966
+2026-03-07 23:29:16,685 - INFO -   Excess Kurtosis              6.446
+2026-03-07 23:29:16,685 - INFO -   Active Trading Days          100.0%
+2026-03-07 23:29:16,685 - INFO -   Final NAV                    $109,973.74
+2026-03-07 23:29:16,685 - INFO -   Trading Days                 126
+2026-03-07 23:29:16,685 - INFO -   F6: IS SR=-1.092 | OOS SR=1.001  CAGR=20.94%  MaxDD=-8.96%
+2026-03-07 23:29:16,685 - INFO - Backtest window: 2019-01-02 → 2023-07-05 (1134 total days, warmup=21d, recording from 2019-01-02)
+2026-03-07 23:29:17,665 - CRITICAL - HALT triggered 2020-08-13: DD=-20.16%
+2026-03-07 23:29:17,669 - INFO - 2020-11-06: Halt recovery — entering ramp-in.
+2026-03-07 23:29:17,671 - WARNING - 2020-11-09: Ramp-in breach DD=-19.17%. Back to mandatory BIL.
+2026-03-07 23:29:17,676 - INFO - 2021-02-05: Halt recovery — entering ramp-in.
+2026-03-07 23:29:17,679 - WARNING - 2021-02-08: Ramp-in breach DD=-18.21%. Back to mandatory BIL.
+2026-03-07 23:29:17,683 - INFO - 2021-05-05: Halt recovery — entering ramp-in.
+2026-03-07 23:29:17,686 - WARNING - 2021-05-06: Ramp-in breach DD=-17.22%. Back to mandatory BIL.
+2026-03-07 23:29:17,691 - INFO - 2021-08-02: Halt recovery — entering ramp-in.
+2026-03-07 23:29:17,695 - WARNING - 2021-08-03: Ramp-in breach DD=-16.04%. Back to mandatory BIL.
+2026-03-07 23:29:17,700 - INFO - 2021-10-27: Halt recovery — entering ramp-in.
+2026-03-07 23:29:17,701 - WARNING - 2021-10-28: Ramp-in breach DD=-14.85%. Back to mandatory BIL.
+2026-03-07 23:29:17,705 - INFO - 2022-01-25: Halt recovery — entering ramp-in.
+2026-03-07 23:29:17,707 - WARNING - 2022-01-26: Ramp-in breach DD=-13.83%. Back to mandatory BIL.
+2026-03-07 23:29:17,711 - INFO - 2022-04-22: Halt recovery — entering ramp-in.
+2026-03-07 23:29:17,714 - WARNING - 2022-04-25: Ramp-in breach DD=-12.70%. Back to mandatory BIL.
+2026-03-07 23:29:17,718 - INFO - 2022-07-21: Halt recovery — entering ramp-in.
+2026-03-07 23:29:17,721 - WARNING - 2022-07-22: Ramp-in breach DD=-11.69%. Back to mandatory BIL.
+2026-03-07 23:29:17,725 - INFO - 2022-10-17: Halt recovery — entering ramp-in.
+2026-03-07 23:29:17,728 - WARNING - 2022-10-18: Ramp-in breach DD=-10.65%. Back to mandatory BIL.
+2026-03-07 23:29:17,732 - INFO - 2023-01-13: Halt recovery — entering ramp-in.
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:435: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  fx = wrapped_fun(x)
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:439: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  g = append(wrapped_grad(x), 0.0)
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:493: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  a_eq = vstack([con['jac'](x, *con['args'])
+2026-03-07 23:29:17,846 - WARNING - 2023-03-28: Ramp-in breach DD=-10.38%. Back to mandatory BIL.
+2026-03-07 23:29:17,850 - INFO - 2023-06-23: Halt recovery — entering ramp-in.
+2026-03-07 23:29:17,872 - INFO - ══ TEARSHEET ══
+2026-03-07 23:29:17,872 - INFO -   CAGR                         -1.65%
+2026-03-07 23:29:17,872 - INFO -   Ann. Volatility              6.00%
+2026-03-07 23:29:17,872 - INFO -   Sharpe Ratio                 -1.094
+2026-03-07 23:29:17,872 - INFO -   Sortino Ratio                -0.866
+2026-03-07 23:29:17,872 - INFO -   Calmar Ratio                 -0.082
+2026-03-07 23:29:17,872 - INFO -   Max Drawdown                 -20.16%
+2026-03-07 23:29:17,872 - INFO -   Max DD Duration              1107 days
+2026-03-07 23:29:17,872 - INFO -   VaR-95 (daily)               -0.58%
+2026-03-07 23:29:17,872 - INFO -   CVaR-95 (daily)              -1.12%
+2026-03-07 23:29:17,872 - INFO -   Hit Rate                     15.78%
+2026-03-07 23:29:17,872 - INFO -   Avg Daily Turnover           0.0052%
+2026-03-07 23:29:17,872 - INFO -   PSR (SR>0)                   0.0000
+2026-03-07 23:29:17,872 - INFO -   Skewness                     -1.201
+2026-03-07 23:29:17,872 - INFO -   Excess Kurtosis              14.785
+2026-03-07 23:29:17,872 - INFO -   Active Trading Days          39.9%
+2026-03-07 23:29:17,872 - INFO -   Final NAV                    $92,806.97
+2026-03-07 23:29:17,873 - INFO -   Trading Days                 1134
+2026-03-07 23:29:17,873 - INFO - Backtest window: 2023-06-05 → 2024-01-03 (147 total days, warmup=21d, recording from 2023-07-06)
+2026-03-07 23:29:18,230 - INFO - ══ TEARSHEET ══
+2026-03-07 23:29:18,230 - INFO -   CAGR                         +7.85%
+2026-03-07 23:29:18,230 - INFO -   Ann. Volatility              13.02%
+2026-03-07 23:29:18,230 - INFO -   Sharpe Ratio                 0.197
+2026-03-07 23:29:18,230 - INFO -   Sortino Ratio                0.395
+2026-03-07 23:29:18,230 - INFO -   Calmar Ratio                 1.144
+2026-03-07 23:29:18,230 - INFO -   Max Drawdown                 -6.86%
+2026-03-07 23:29:18,230 - INFO -   Max DD Duration              118 days
+2026-03-07 23:29:18,230 - INFO -   VaR-95 (daily)               -1.09%
+2026-03-07 23:29:18,230 - INFO -   CVaR-95 (daily)              -1.29%
+2026-03-07 23:29:18,230 - INFO -   Hit Rate                     52.38%
+2026-03-07 23:29:18,230 - INFO -   Avg Daily Turnover           0.0156%
+2026-03-07 23:29:18,230 - INFO -   PSR (SR>0)                   0.9958
+2026-03-07 23:29:18,231 - INFO -   Skewness                     2.253
+2026-03-07 23:29:18,231 - INFO -   Excess Kurtosis              12.115
+2026-03-07 23:29:18,231 - INFO -   Active Trading Days          100.0%
+2026-03-07 23:29:18,231 - INFO -   Final NAV                    $103,849.39
+2026-03-07 23:29:18,231 - INFO -   Trading Days                 126
+2026-03-07 23:29:18,231 - INFO -   F7: IS SR=-1.094 | OOS SR=0.197  CAGR=7.85%  MaxDD=-6.86%
+2026-03-07 23:29:18,231 - INFO - Backtest window: 2019-01-02 → 2024-01-03 (1260 total days, warmup=21d, recording from 2019-01-02)
+2026-03-07 23:29:19,218 - CRITICAL - HALT triggered 2020-08-13: DD=-20.16%
+2026-03-07 23:29:19,222 - INFO - 2020-11-06: Halt recovery — entering ramp-in.
+2026-03-07 23:29:19,224 - WARNING - 2020-11-09: Ramp-in breach DD=-19.17%. Back to mandatory BIL.
+2026-03-07 23:29:19,228 - INFO - 2021-02-05: Halt recovery — entering ramp-in.
+2026-03-07 23:29:19,232 - WARNING - 2021-02-08: Ramp-in breach DD=-18.21%. Back to mandatory BIL.
+2026-03-07 23:29:19,236 - INFO - 2021-05-05: Halt recovery — entering ramp-in.
+2026-03-07 23:29:19,239 - WARNING - 2021-05-06: Ramp-in breach DD=-17.22%. Back to mandatory BIL.
+2026-03-07 23:29:19,243 - INFO - 2021-08-02: Halt recovery — entering ramp-in.
+2026-03-07 23:29:19,247 - WARNING - 2021-08-03: Ramp-in breach DD=-16.04%. Back to mandatory BIL.
+2026-03-07 23:29:19,251 - INFO - 2021-10-27: Halt recovery — entering ramp-in.
+2026-03-07 23:29:19,253 - WARNING - 2021-10-28: Ramp-in breach DD=-14.85%. Back to mandatory BIL.
+2026-03-07 23:29:19,257 - INFO - 2022-01-25: Halt recovery — entering ramp-in.
+2026-03-07 23:29:19,259 - WARNING - 2022-01-26: Ramp-in breach DD=-13.83%. Back to mandatory BIL.
+2026-03-07 23:29:19,264 - INFO - 2022-04-22: Halt recovery — entering ramp-in.
+2026-03-07 23:29:19,267 - WARNING - 2022-04-25: Ramp-in breach DD=-12.70%. Back to mandatory BIL.
+2026-03-07 23:29:19,270 - INFO - 2022-07-21: Halt recovery — entering ramp-in.
+2026-03-07 23:29:19,273 - WARNING - 2022-07-22: Ramp-in breach DD=-11.69%. Back to mandatory BIL.
+2026-03-07 23:29:19,278 - INFO - 2022-10-17: Halt recovery — entering ramp-in.
+2026-03-07 23:29:19,280 - WARNING - 2022-10-18: Ramp-in breach DD=-10.65%. Back to mandatory BIL.
+2026-03-07 23:29:19,285 - INFO - 2023-01-13: Halt recovery — entering ramp-in.
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:435: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  fx = wrapped_fun(x)
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:439: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  g = append(wrapped_grad(x), 0.0)
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:493: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  a_eq = vstack([con['jac'](x, *con['args'])
+2026-03-07 23:29:19,405 - WARNING - 2023-03-28: Ramp-in breach DD=-10.38%. Back to mandatory BIL.
+2026-03-07 23:29:19,410 - INFO - 2023-06-23: Halt recovery — entering ramp-in.
+2026-03-07 23:29:19,489 - WARNING - 2023-08-14: Ramp-in breach DD=-10.34%. Back to mandatory BIL.
+2026-03-07 23:29:19,493 - INFO - 2023-11-07: Halt recovery — entering ramp-in.
+2026-03-07 23:29:19,549 - WARNING - 2023-12-20: Ramp-in breach DD=-10.33%. Back to mandatory BIL.
+2026-03-07 23:29:19,553 - INFO - ══ TEARSHEET ══
+2026-03-07 23:29:19,553 - INFO -   CAGR                         -1.68%
+2026-03-07 23:29:19,553 - INFO -   Ann. Volatility              5.69%
+2026-03-07 23:29:19,553 - INFO -   Sharpe Ratio                 -1.101
+2026-03-07 23:29:19,553 - INFO -   Sortino Ratio                -0.869
+2026-03-07 23:29:19,553 - INFO -   Calmar Ratio                 -0.083
+2026-03-07 23:29:19,553 - INFO -   Max Drawdown                 -20.16%
+2026-03-07 23:29:19,553 - INFO -   Max DD Duration              1233 days
+2026-03-07 23:29:19,553 - INFO -   VaR-95 (daily)               -0.53%
+2026-03-07 23:29:19,553 - INFO -   CVaR-95 (daily)              -1.06%
+2026-03-07 23:29:19,553 - INFO -   Hit Rate                     14.21%
+2026-03-07 23:29:19,553 - INFO -   Avg Daily Turnover           0.0052%
+2026-03-07 23:29:19,553 - INFO -   PSR (SR>0)                   0.0000
+2026-03-07 23:29:19,554 - INFO -   Skewness                     -1.275
+2026-03-07 23:29:19,554 - INFO -   Excess Kurtosis              16.766
+2026-03-07 23:29:19,554 - INFO -   Active Trading Days          40.6%
+2026-03-07 23:29:19,554 - INFO -   Final NAV                    $91,884.13
+2026-03-07 23:29:19,554 - INFO -   Trading Days                 1260
+2026-03-07 23:29:19,554 - INFO - Backtest window: 2023-12-04 → 2024-07-05 (147 total days, warmup=21d, recording from 2024-01-04)
+2026-03-07 23:29:19,828 - INFO - ══ TEARSHEET ══
+2026-03-07 23:29:19,829 - INFO -   CAGR                         +17.73%
+2026-03-07 23:29:19,829 - INFO -   Ann. Volatility              7.53%
+2026-03-07 23:29:19,829 - INFO -   Sharpe Ratio                 1.432
+2026-03-07 23:29:19,829 - INFO -   Sortino Ratio                2.700
+2026-03-07 23:29:19,829 - INFO -   Calmar Ratio                 7.024
+2026-03-07 23:29:19,829 - INFO -   Max Drawdown                 -2.52%
+2026-03-07 23:29:19,829 - INFO -   Max DD Duration              36 days
+2026-03-07 23:29:19,829 - INFO -   VaR-95 (daily)               -0.71%
+2026-03-07 23:29:19,829 - INFO -   CVaR-95 (daily)              -0.81%
+2026-03-07 23:29:19,829 - INFO -   Hit Rate                     56.35%
+2026-03-07 23:29:19,829 - INFO -   Avg Daily Turnover           0.0130%
+2026-03-07 23:29:19,829 - INFO -   PSR (SR>0)                   1.0000
+2026-03-07 23:29:19,829 - INFO -   Skewness                     0.073
+2026-03-07 23:29:19,829 - INFO -   Excess Kurtosis              -0.514
+2026-03-07 23:29:19,829 - INFO -   Active Trading Days          100.0%
+2026-03-07 23:29:19,829 - INFO -   Final NAV                    $108,502.41
+2026-03-07 23:29:19,829 - INFO -   Trading Days                 126
+2026-03-07 23:29:19,829 - INFO -   F8: IS SR=-1.101 | OOS SR=1.432  CAGR=17.73%  MaxDD=-2.52%
+2026-03-07 23:29:19,831 - INFO - WF summary: avg IS=-1.215 | avg OOS=0.324 | IS/OOS ratio=-0.266 (⚠️  overfitting)
+2026-03-07 23:29:19,832 - INFO - ✅ Done. Run scripts/visualize_tearsheet.py next.
+[0;32m[OK][0m Stage 3: Event-Driven Standalone Backtest complete.
+
+[0;36m══════════════════════════════════════════[0m
+[0;36m  Stage 4: Tearsheet Visualisation[0m
+[0;36m══════════════════════════════════════════[0m
+2026-03-07 23:29:20,599 - WARNING - Could not load SPY benchmark: No module named 'yfinance'. Skipping benchmark overlay.
+/home/alexr/fortress_v5/scripts/visualize_tearsheet.py:166: FutureWarning: 'M' is deprecated and will be removed in a future version, please use 'ME' instead.
+  monthly = returns.resample("M").apply(lambda r: (1 + r).prod() - 1)
+2026-03-07 23:29:22,025 - INFO - Institutional tear sheet saved to research/outputs/tearsheet.png
+[0;32m[OK][0m Stage 4: Tearsheet Visualisation complete.
+
+[0;32mPipeline complete at Sat Mar  7 23:29:22 CET 2026.[0m
+[INFO] Full log: /home/alexr/fortress_v5/logs/pipeline_20260307_232857.log

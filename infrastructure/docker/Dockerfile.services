@@ -1,0 +1,128 @@
+# FORTRESS v5 - Dockerfile.services
+# Path: infrastructure/docker/Dockerfile.services
+#
+# Universal Docker image for ALL Python microservices in the Ouroboros system.
+# Used by docker-compose.yml for:
+#   - regime-encoder
+#   - alpha-engine
+#   - portfolio-agent
+#   - execution-router
+#   - tda-topology
+#
+# AUDIT FIX: This file was referenced in docker-compose.yml but DID NOT EXIST.
+# `docker-compose up` would fail at build time with:
+#   "failed to solve: failed to read dockerfile: open Dockerfile.services: no such file"
+#
+# BUILD STRATEGY:
+#   Multi-stage build to minimise final image size.
+#   Stage 1 (builder): Installs all heavy dependencies (PyTorch, PyG, torchsde).
+#   Stage 2 (runtime): Copies only the installed packages and source code.
+#   Final image size target: < 8GB with CUDA, < 3GB CPU-only.
+#
+# CUDA NOTE:
+#   Change the base image to python:3.11-slim for CPU-only deployment.
+#   For GPU: use pytorch/pytorch:2.3.1-cuda12.1-cudnn8-runtime as the runtime base.
+#
+# SECURITY:
+#   - Runs as non-root user `fortress` (UID 1001).
+#   - No SSH server, no cron, no shell login.
+#   - Secrets injected via Docker secrets / environment variables at runtime.
+#     No secrets are baked into the image.
+#
+# USAGE:
+#   docker build -f infrastructure/docker/Dockerfile.services -t ouroboros-services:latest .
+#   docker run --gpus all --env-file .env ouroboros-services:latest python -m services.regime_encoder_svc
+
+# ── Stage 1: Builder ──────────────────────────────────────────────────────────
+FROM python:3.11-slim AS builder
+
+# System dependencies for PyTorch, asyncpg, and C extensions
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    gcc \
+    g++ \
+    git \
+    curl \
+    libpq-dev \
+    libssl-dev \
+    libffi-dev \
+    libblas-dev \
+    liblapack-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Copy only requirements first (Docker layer cache optimisation).
+# If requirements don't change, this layer is cached even when source changes.
+COPY requirements.txt ./
+
+# ── Core ML stack ─────────────────────────────────────────────────────────────
+# Install PyTorch (CPU-only for CI; override with GPU image at runtime)
+RUN pip install --no-cache-dir \
+    torch==2.3.1 \
+    torchaudio==2.3.1 \
+    --index-url https://download.pytorch.org/whl/cpu
+
+# PyTorch Geometric — install with matching torch/cuda versions
+# For GPU deployments, change `cpu` to `cu121` (CUDA 12.1)
+RUN pip install --no-cache-dir \
+    torch_geometric==2.5.3 \
+    torch_scatter \
+    torch_sparse \
+    torch_cluster \
+    -f https://data.pyg.org/whl/torch-2.3.1+cpu.html
+
+# Neural SDE solver
+RUN pip install --no-cache-dir torchsde==0.2.6
+
+# ── Application dependencies ──────────────────────────────────────────────────
+RUN pip install --no-cache-dir -r requirements.txt
+
+
+# ── Stage 2: Runtime ─────────────────────────────────────────────────────────
+FROM python:3.11-slim AS runtime
+
+# Runtime system libraries (no build tools — smaller final image)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    libgomp1 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create a non-root user for security
+RUN groupadd --gid 1001 fortress \
+    && useradd --uid 1001 --gid 1001 --no-create-home --shell /bin/false fortress
+
+WORKDIR /app
+
+# Copy installed Python packages from builder (avoids reinstalling in runtime)
+COPY --from=builder /usr/local/lib/python3.11/site-packages \
+                    /usr/local/lib/python3.11/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+# Copy source code (owned by fortress user, not root)
+COPY --chown=fortress:fortress . .
+
+# ── Environment ───────────────────────────────────────────────────────────────
+# PYTHONPATH ensures `from models.regime import ...` resolves correctly
+ENV PYTHONPATH=/app
+# Prevent Python from writing .pyc files into the image layer
+ENV PYTHONDONTWRITEBYTECODE=1
+# Disable output buffering so logs appear immediately in `docker logs`
+ENV PYTHONUNBUFFERED=1
+# Default to CPU; override to 'cuda' in docker-compose for GPU nodes
+ENV TORCH_DEVICE=cpu
+
+# ── Health check ─────────────────────────────────────────────────────────────
+# Each microservice exposes a /health endpoint on port 8080 (via aiohttp).
+# Docker will restart the container if health check fails 3 consecutive times.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+# ── Security: drop to non-root ────────────────────────────────────────────────
+USER fortress
+
+# ── Default entrypoint ────────────────────────────────────────────────────────
+# Override via docker-compose `command:` field for each specific microservice.
+# Example: command: python -m services.regime_encoder_svc
+CMD ["python", "-m", "live.live_bot"]

@@ -1,88 +1,45 @@
 """
-FORTRESS v5 — run_standalone_backtest.py  [PATCH v3]
+FORTRESS v5 — run_standalone_backtest.py  [PATCH v4]
 Path: scripts/run_standalone_backtest.py
 
-═══════════════════════════════════════════════════════════════════════════════
-BUGS FIXED vs v2
-═══════════════════════════════════════════════════════════════════════════════
+NEW BUGS FIXED vs v3
+════════════════════════════════════════════════════════════════════════════════
 
-  BUG #6 [CRITICAL — ROOT CAUSE of "Trading Days: 126"]:
-    start_date="2020-01-02" was used as the first date loaded into `dates`.
-    Warmup consumed li < 126 → only 126 warmup snaps entered `history`.
-    The active trading code never ran because the entire recorded window was
-    inside the warmup guard.
+  BUG #13 [CRITICAL — 3-year mandatory-BIL trap]:
+    The ramp-in breach guard used:
+        dd = (self.nav - self._peak) / self._peak
+        if dd <= -_HALT_RECOVERY_THRESH:   # −10%
+    `self._peak` is the all-time NAV high from BEFORE the halt (e.g. $120k).
+    `self._halt_nav` ≈ $96k (20% below peak).  After 60 days in BIL at 5%
+    annual RF, `self.nav` ≈ $97.1k — still 19% below the $120k peak.
+    The MVO ramp trade on day 1 incurs any finite daily loss (say −0.3%)
+    → nav = $96.8k → dd = (96.8k − 120k) / 120k ≈ −19.3% → breach fires.
+    The system cycled: mandatory-BIL 60d → ramp 1d → breach → mandatory-BIL
+    sixty times over ~3 years.  Active trading was impossible after the first
+    halt; the "47.5% active days" was a statistical artefact of pre-halt data.
 
-    Fix: `run()` now extends the data window *backwards* by `warmup_days`
-    trading days before `start_date`. Warmup runs silently on pre-start_date
-    data (no snaps recorded). Active trading and tearsheet recording begin
-    exactly at `start_date`. The DataFrame index used for the extension is
-    computed via `searchsorted` — zero string-comparison fragility.
+    Root cause: the breach guard was anchored to the historic peak, not to
+    the portfolio state at the time the recovery attempt began.
 
-  BUG #7 [CRITICAL — silent TypeError at li=126]:
-    `returns_df.index.get_loc(date)` returns a `slice` object when the
-    DatetimeIndex contains duplicates (the audit detected 1510 such duplicates
-    in the stale cache). `gi = g0 + li` where `g0 = slice(...)` raises
-    TypeError at the first post-warmup use of `gi` (_cov, vol_d slicing).
-    The exception propagated out of `run()`, aborting the loop with only
-    warmup snaps in `self.history`. `_build_tearsheet` then produced the
-    126-row artifact.
+    Fix: introduce `_ramp_entry_nav` (NAV captured at the moment Phase 1 →
+    Phase 2 transition fires).  Breach guard now evaluates:
+        ramp_local_dd = (self.nav - self._ramp_entry_nav) / self._ramp_entry_nav
+        if ramp_local_dd <= -_HALT_RECOVERY_THRESH:
+    Semantics: "abort ramp-in if we lose >10% of what we had when we started
+    ramping, not from an unreachable historic peak."
 
-    Fix: `_normalize_index()` strips timezone, deduplicates (keep='last'),
-    and sorts all four DataFrames immediately after loading. After this,
-    `get_loc()` always returns an int. Additionally switched to
-    `searchsorted(side='left')` for `g0` which is O(log N) and slice-safe.
+  BUG #16 [Walk-forward overfitting verdict]:
+    `ratio = avg_oos / (avg_is + 1e-10)` produces a meaningless negative
+    value when avg_is < 0 (IS periods contain the 2020 halt).  Printing that
+    as "overfitting" is both wrong and confusing.
 
-  BUG #8 [_invest_bil cash arithmetic]:
-    Sequential cash deduction: first loop allocated 60% from full cash,
-    reducing it to 40%. Second loop allocated 40% of the *remaining* 40%
-    (= 16% of original). Net deployment: 76%. 24% left as uninvested cash.
-
-    Fix: capture `total_cash` before the loop; allocate each tranche from
-    the frozen total.
-
-  BUG #9 [_rf_step double-counts cash]:
-    `self.cash += delta` was called with `self.cash ≈ 0` (after _invest_bil
-    deployed capital). RF delta was added to a near-zero cash balance,
-    inflating it to ~2.6% of NAV over 126 warmup days. On day 127,
-    `_mtm` computed `new = inflated_cash + market_valued_equity`, and
-    `new ≠ self.nav` (RF-compounded) produced a phantom daily return on the
-    first active day, corrupting all downstream metrics.
-
-    Fix: scale BIL/SHV *position share counts* by (1+rf) each day, which
-    embeds the yield directly into position size. `self.nav` is mirrored from
-    `nav *= (1+rf)`. `self.cash` is not touched. The first `_mtm` call now
-    returns a genuinely observed market return.
-
-  BUG #10 [covariance look-ahead bias]:
-    `returns_df.iloc[gi - W + 1 : gi + 1]` included today's realised return
-    (index gi) in the covariance used to size today's trade. This is a subtle
-    but genuine point-in-time violation — at trade construction time (open of
-    day gi), today's return is unknowable.
-
-    Fix: `returns_df.iloc[max(0, gi - W) : gi]` — W days through yesterday,
-    exclusive of today.
-
-  BUG #11 [walk-forward OOS warmup = OOS period]:
-    Each 6-month OOS fold is ≈126 trading days. A fresh StandaloneBacktester
-    with `_WARMUP_DAYS=126` spent *all* OOS days in warmup. Every OOS fold
-    returned SR=0.000, CAGR=5.13%, MaxDD=0.00% — pure RF compounding.
-    IS/OOS comparison was measuring warmup vs. warmup.
-
-    Fix: `_WF_WARMUP_DAYS = 21` (one calendar month) for WF calls. The OOS
-    runner now receives `warmup_days=_WF_WARMUP_DAYS`. Combined with the BUG
-    #6 fix, warmup runs on the 21 trading days *before* oos_start, leaving
-    ≈105 active-trading days per OOS period.
-
-  BUG #12 [DSR / Probabilistic Sharpe Ratio formula]:
-    v2 formula: `(SR - ppf) / sqrt(...)` was dimensionally wrong and omitted
-    the higher-moment corrections (skewness, excess kurtosis) that are
-    essential for non-Gaussian return distributions.
-
-    Fix: Probabilistic Sharpe Ratio from Bailey & López de Prado (2012):
-      Z = (SR̂ - SR*) × √(N-1) / √(1 - γ₃×SR̂ + (γ₄-1)/4 × SR̂²)
-      PSR(SR*) = Φ[Z]
-    γ₃ = skewness of daily returns, γ₄ = raw (non-excess) kurtosis.
-    SR* = 0.0 (test whether strategy SR > zero).
+    Fix: richer verdict logic:
+      · If avg_oos > 0.5                         → ✅ OOS profitable
+      · If avg_oos > 0 and avg_is < 0            → ⚠️  IS dominated by halt;
+                                                       OOS signal is positive
+      · If avg_is > 0 and ratio > 0.5            → ✅ IS/OOS ratio acceptable
+      · If avg_is > 0 and ratio <= 0.5           → ⚠️  overfitting
+      · Otherwise (avg_oos <= 0)                 → ❌ negative OOS alpha
 """
 
 from __future__ import annotations
@@ -92,7 +49,7 @@ import logging
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
@@ -140,8 +97,8 @@ _MAX_DD_HALT:           float = 0.20
 _HALT_RECOVERY_THRESH:  float = 0.10
 _HALT_MIN_DAYS:         int   = 60
 _HALT_RAMP_DAYS:        int   = 60
-_WARMUP_DAYS:           int   = 126    # main backtest warmup (pre-start_date)
-_WF_WARMUP_DAYS:        int   = 21    # BUG #11 FIX: WF folds use 1-month warmup
+_WARMUP_DAYS:           int   = 126
+_WF_WARMUP_DAYS:        int   = 21
 _REBALANCE_BAND:        float = 50e-4
 _LAMBDA_BASE:           float = 2.0
 _COV_WINDOW:            int   = 63
@@ -151,40 +108,27 @@ _AC_ETA:                float = 0.1
 _BASE_SPREAD_BPS:       float = 1.0
 _TRADING_DAYS_YEAR:     int   = 252
 
-# Default safe-haven weight vector (60% BIL + 40% SHV)
 _BIL_WEIGHT = np.zeros(N_ASSETS, dtype=np.float32)
 _BIL_WEIGHT[TICKERS.index("BIL")] = 0.60
 _BIL_WEIGHT[TICKERS.index("SHV")] = 0.40
 
 
-# ── Index normalisation (BUG #7 FIX) ─────────────────────────────────────────
+# ── Index normalisation ───────────────────────────────────────────────────────
 
 def _normalize_index(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Strip timezone, deduplicate (keep last), sort ascending.
-
-    Critical invariant: get_loc() on a unique DatetimeIndex always returns int,
-    never a slice or boolean array. searchsorted() is also safe only on sorted
-    unique indices.
-    """
+    """Strip tz, dedup (keep last), sort. Guarantees get_loc() → int always."""
     idx = pd.to_datetime(df.index)
     if idx.tz is not None:
         idx = idx.tz_localize(None)
     df = df.copy()
     df.index = idx
-    df = df[~df.index.duplicated(keep="last")].sort_index()
-    return df
+    return df[~df.index.duplicated(keep="last")].sort_index()
 
 
-# ── FIX #2 (retained): Regime signal smoother ────────────────────────────────
+# ── Regime signal smoother ────────────────────────────────────────────────────
 
 class RegimeSignalSmoother:
-    """
-    EMA (τ=8d) + persistence gate (≥5 consecutive days) on PCA z_mu.
-
-    Prevents the 42.4% single-day label reversal rate observed in v1, where
-    any one-day return flip drives z_mu[0] across the ±2 boundary.
-    """
+    """EMA(τ=8d) + persistence gate(≥5d) on PCA z_mu to suppress 42% flip rate."""
 
     def __init__(self, latent_dim: int = 16) -> None:
         self._alpha = 1.0 - np.exp(-1.0 / _EMA_SPAN)
@@ -193,18 +137,15 @@ class RegimeSignalSmoother:
         self._stable_label: str = "bull_low_vol"
 
     def update(self, z_mu_raw: np.ndarray, raw_label: str) -> Tuple[np.ndarray, str]:
-        z_safe = np.nan_to_num(z_mu_raw.reshape(-1), nan=0.0, posinf=2.0, neginf=-2.0)
-        # Resize to match internal EMA dimension if latent_dim differs
-        if z_safe.shape[0] != self._ema.shape[0]:
-            z_safe = np.resize(z_safe, self._ema.shape[0])
-        self._ema = self._alpha * z_safe + (1.0 - self._alpha) * self._ema
-
+        z = np.nan_to_num(z_mu_raw.ravel(), nan=0.0, posinf=2.0, neginf=-2.0)
+        if z.shape[0] != self._ema.shape[0]:
+            z = np.resize(z, self._ema.shape[0])
+        self._ema = self._alpha * z + (1.0 - self._alpha) * self._ema
         self._raw_history.append(raw_label)
         if len(self._raw_history) >= _REGIME_PERSIST_DAYS:
             window = self._raw_history[-_REGIME_PERSIST_DAYS:]
             if len(set(window)) == 1:
                 self._stable_label = window[0]
-
         return self._ema.copy(), self._stable_label
 
 
@@ -223,10 +164,10 @@ def _cov(window: pd.DataFrame, shrink: float = 0.1) -> np.ndarray:
     if not np.isfinite(C).all():
         return np.eye(N_ASSETS) * (0.15 ** 2 / _TRADING_DAYS_YEAR)
     I = np.trace(C) / N_ASSETS * np.eye(N_ASSETS)
-    return (1 - shrink) * C + shrink * I
+    return (1.0 - shrink) * C + shrink * I
 
 
-# ── MVO (SLSQP, regime-conditioned risk aversion) ─────────────────────────────
+# ── MVO (SLSQP + regime-conditioned λ) ───────────────────────────────────────
 
 def _mvo_weights(
     alpha: np.ndarray,
@@ -235,14 +176,9 @@ def _mvo_weights(
     vol_d: np.ndarray,
     alloc_scale: float = 1.0,
 ) -> np.ndarray:
-    """
-    Long-only MVO with regime-conditioned λ.
-    alloc_scale ∈ [0,1] blends result toward safe-haven during ramp-in.
-    """
     avg_vol = float(np.mean(vol_d) * np.sqrt(_TRADING_DAYS_YEAR))
     lam = float(np.clip(_LAMBDA_BASE * np.exp(avg_vol * abs(z0_smooth)), 0.5, 15.0))
     Σ   = cov_d * _TRADING_DAYS_YEAR
-
     mx  = np.array([TIER_MAX_WEIGHT[t] for t in TICKERS]) * alloc_scale
     bds = [(0.0, float(m)) for m in mx]
 
@@ -258,76 +194,42 @@ def _mvo_weights(
     if res.success:
         w = res.x
     else:
-        # Inverse-vol fallback: closed-form, always feasible
         iv = np.minimum(1.0 / (np.diag(Σ) ** 0.5 + 1e-8), mx * 3)
         w  = iv / (iv.sum() + 1e-10)
 
     w = np.clip(w, 0.0, mx)
     s = w.sum()
-    if s < 1e-10:
-        # Degenerate: all weights clipped to zero — fall back to equal weight
-        w = np.where(mx > 0, 1.0 / max((mx > 0).sum(), 1), 0.0)
-    else:
-        w /= s
+    w = w / s if s > 1e-10 else np.where(mx > 0, 1.0 / max((mx > 0).sum(), 1), 0.0)
     return w.astype(np.float32)
 
 
-# ── Probabilistic Sharpe Ratio (BUG #12 FIX) ─────────────────────────────────
+# ── Probabilistic Sharpe Ratio (Bailey & López de Prado 2012) ─────────────────
 
-def _psr(
-    sr_hat: float,
-    n: int,
-    skew: float,
-    kurt_raw: float,
-    sr_benchmark: float = 0.0,
-) -> float:
-    """
-    PSR = Φ[ (SR̂ − SR*) × √(N−1) / √(1 − γ₃×SR̂ + (γ₄−1)/4 × SR̂²) ]
-
-    Bailey & López de Prado (2012), "The Sharpe Ratio Efficient Frontier".
-    γ₃ = skewness of daily returns.
-    γ₄ = raw (non-excess) kurtosis (kurt_raw = excess_kurtosis + 3).
-
-    Denominator clipped at 1e-6 to prevent division by zero for degenerate
-    return distributions (e.g. constant returns during warmup-only periods).
-    """
+def _psr(sr_hat: float, n: int, skew: float, kurt_raw: float,
+         sr_benchmark: float = 0.0) -> float:
+    """PSR = Φ[(SR̂ − SR*) × √(N−1) / √(1 − γ₃SR̂ + (γ₄−1)/4 × SR̂²)]"""
     if n <= 2:
         return 0.0
-    denom_sq = 1.0 - skew * sr_hat + (kurt_raw - 1.0) / 4.0 * sr_hat ** 2
-    denom    = np.sqrt(max(denom_sq, 1e-6))
-    z        = (sr_hat - sr_benchmark) * np.sqrt(n - 1) / denom
-    return float(norm.cdf(z))
+    denom = np.sqrt(max(1.0 - skew * sr_hat + (kurt_raw - 1.0) / 4.0 * sr_hat ** 2, 1e-6))
+    return float(norm.cdf((sr_hat - sr_benchmark) * np.sqrt(n - 1) / denom))
 
 
 # ── Data containers ───────────────────────────────────────────────────────────
 
 @dataclass
 class Snap:
-    date: str
-    portfolio_value: float
-    daily_return: float
-    cash: float
-    turnover: float
-    regime_label: str
-    z_mu_0: float
-    drawdown: float
+    date: str; portfolio_value: float; daily_return: float; cash: float
+    turnover: float; regime_label: str; z_mu_0: float; drawdown: float
     halt_phase: int
 
 
 @dataclass
 class WFFold:
-    fold_id: int
-    is_start: str
-    is_end: str
-    oos_start: str
-    oos_end: str
-    is_sharpe: float
-    oos_sharpe: float
-    oos_cagr: float
-    oos_max_dd: float
+    fold_id: int; is_start: str; is_end: str; oos_start: str; oos_end: str
+    is_sharpe: float; oos_sharpe: float; oos_cagr: float; oos_max_dd: float
 
 
-# ── Core backtesting engine ───────────────────────────────────────────────────
+# ── Core engine ───────────────────────────────────────────────────────────────
 
 class StandaloneBacktester:
 
@@ -336,16 +238,17 @@ class StandaloneBacktester:
         self.cash: float = _INITIAL_CAPITAL
         self.pos:  Dict[str, float] = {}
         self.history: List[Snap] = []
-        self._peak:        float = _INITIAL_CAPITAL
-        self._prev_regime: str   = ""
-        self._halt_phase:  int   = 0  # 0=active, 1=mandatory BIL, 2=ramp
-        self._halt_days:   int   = 0
-        self._halt_nav:    float = _INITIAL_CAPITAL
-        self._ramp_days:   int   = 0
+        self._peak:          float = _INITIAL_CAPITAL
+        self._prev_regime:   str   = ""
+        self._halt_phase:    int   = 0
+        self._halt_days:     int   = 0
+        self._halt_nav:      float = _INITIAL_CAPITAL
+        self._ramp_days:     int   = 0
+        # BUG #13 FIX: track NAV at the moment ramp-in begins
+        self._ramp_entry_nav: float = _INITIAL_CAPITAL
         self._smoother = RegimeSignalSmoother()
 
     def _liquidate(self, px: np.ndarray) -> None:
-        """Convert all positions to cash at current prices."""
         for t in list(self.pos.keys()):
             sh = self.pos.pop(t, 0.0)
             if sh != 0.0:
@@ -353,38 +256,17 @@ class StandaloneBacktester:
         self.nav = self.cash
 
     def _invest_bil(self, px: np.ndarray) -> None:
-        """
-        BUG #8 FIX: Allocate from captured total_cash.
-
-        v2 bug: sequential deduction from self.cash meant:
-          BIL loop: cash -= cash*0.60  → cash = 0.40×C
-          SHV loop: cash -= cash*0.40  → cash = 0.24×C
-        Result: 24% capital stranded as uninvested cash.
-
-        Fix: freeze total_cash before the loop; deduct fixed fractions of that.
-        """
+        """FIX #8: allocate from frozen total_cash to avoid sequential-deduction bug."""
         self._liquidate(px)
         total_cash = self.cash
         for t, frac in [("BIL", 0.60), ("SHV", 0.40)]:
             i      = TICKERS.index(t)
             alloc  = total_cash * frac
-            shares = alloc / (px[i] + 1e-10)
-            self.pos[t] = self.pos.get(t, 0.0) + shares
+            self.pos[t] = self.pos.get(t, 0.0) + alloc / (px[i] + 1e-10)
             self.cash  -= alloc
-        # self.cash ≈ 0 (floating-point epsilon only)
 
     def _rf_step(self) -> float:
-        """
-        BUG #9 FIX: Yield-via-share-scaling instead of cash injection.
-
-        v2 bug: `self.cash += self.nav * rf` added RF to a near-zero cash
-        balance, inflating it to ~2.6% of NAV over 126 warmup days.
-        First _mtm call saw new = inflated_cash + market_equity ≠ nav,
-        generating a phantom return that corrupted all downstream metrics.
-
-        Fix: scale BIL/SHV share counts by (1+rf). nav is mirrored via
-        nav *= (1+rf). self.cash stays at its true near-zero value.
-        """
+        """FIX #9: yield via share-scaling; self.cash stays at near-zero."""
         rf = _RISK_FREE_ANNUAL / _TRADING_DAYS_YEAR
         for t in ("BIL", "SHV"):
             if self.pos.get(t, 0.0) > 0.0:
@@ -393,19 +275,8 @@ class StandaloneBacktester:
         self._peak = max(self._peak, self.nav)
         return rf
 
-    def _rebalance(
-        self,
-        target: np.ndarray,
-        px: np.ndarray,
-        vol: np.ndarray,
-        adv: np.ndarray,
-        force: bool = False,
-    ) -> float:
-        """
-        FIX #5 (retained): Dual-threshold rebalancing.
-        force=True: bypass dead-band (regime-change event).
-        force=False: 50bps absolute weight delta required to trade.
-        """
+    def _rebalance(self, target: np.ndarray, px: np.ndarray,
+                   vol: np.ndarray, adv: np.ndarray, force: bool = False) -> float:
         current = np.array([
             self.pos.get(t, 0.0) * px[i] / (self.nav + 1e-10)
             for i, t in enumerate(TICKERS)
@@ -417,28 +288,21 @@ class StandaloneBacktester:
                 continue
             dol    = delta[i] * self.nav
             shares = dol / (px[i] + 1e-10)
-            c      = (
-                abs(dol)
-                * (_ac_cost_bps(shares, vol[i], adv[i]) + _BASE_SPREAD_BPS)
-                / 10_000
-            )
-            cost += c
+            c      = abs(dol) * (_ac_cost_bps(shares, vol[i], adv[i]) + _BASE_SPREAD_BPS) / 10_000
+            cost  += c
             self.cash   += -(dol + np.sign(dol) * c)
             self.pos[t]  = self.pos.get(t, 0.0) + shares
         return cost / (self.nav + 1e-10)
 
     def _mtm(self, px: np.ndarray) -> float:
-        """Mark portfolio to market; return daily P&L rate."""
-        equity = sum(
-            self.pos.get(t, 0.0) * px[i] for i, t in enumerate(TICKERS)
-        )
-        new         = self.cash + equity
-        dr          = (new - self.nav) / (self.nav + 1e-10)
-        self.nav    = new
-        self._peak  = max(self._peak, new)
+        equity   = sum(self.pos.get(t, 0.0) * px[i] for i, t in enumerate(TICKERS))
+        new      = self.cash + equity
+        dr       = (new - self.nav) / (self.nav + 1e-10)
+        self.nav = new
+        self._peak = max(self._peak, new)
         return dr
 
-    # ── Main simulation loop ───────────────────────────────────────────────────
+    # ── Main loop ──────────────────────────────────────────────────────────────
 
     def run(
         self,
@@ -451,58 +315,41 @@ class StandaloneBacktester:
         warmup_days: int = _WARMUP_DAYS,
     ) -> pd.DataFrame:
         """
-        BUG #6 FIX: Extend data window backwards by `warmup_days` trading days
-        before `start_date`. Warmup runs on pre-start_date data (no history
-        recorded). Recording and active trading begin exactly at `start_date`.
-
-        This guarantees `Trading Days = (end_date − start_date)` regardless
-        of `warmup_days`, as long as prices_df contains sufficient pre-history.
+        FIX #6: extend data window backwards by warmup_days before start_date.
+        Warmup runs silently on pre-start_date data; recording begins at start_date.
         """
         self._reset()
-
         ts_start = pd.Timestamp(start_date)
         ts_end   = pd.Timestamp(end_date)
 
-        # ── BUG #6 FIX: resolve pre-start warmup window ───────────────────────
-        # searchsorted is safe on sorted, deduplicated (normalised) index.
-        start_pos  = int(prices_df.index.searchsorted(ts_start, side="left"))
-        ext_pos    = max(0, start_pos - warmup_days)
-        ext_start  = prices_df.index[ext_pos]
-        # Count how many days in [ext_start, start_date) we have for warmup.
-        # If pre-history is shorter than warmup_days, extra warmup occurs inside
-        # the recording window and those snaps are tagged "WARMUP".
-        pre_warmup_days = start_pos - ext_pos  # may be < warmup_days
+        start_pos = int(prices_df.index.searchsorted(ts_start, side="left"))
+        ext_pos   = max(0, start_pos - warmup_days)
+        ext_start = prices_df.index[ext_pos]
 
-        mask   = (prices_df.index >= ext_start) & (prices_df.index <= ts_end)
-        dates  = prices_df.index[mask]
-        px_df  = prices_df.loc[mask]
-        n_ext  = len(dates)
-
-        # BUG #7 FIX: positional anchor in returns_df (safe after normalisation)
-        g0 = int(returns_df.index.searchsorted(ext_start, side="left"))
+        mask  = (prices_df.index >= ext_start) & (prices_df.index <= ts_end)
+        dates = prices_df.index[mask]
+        px_df = prices_df.loc[mask]
+        g0    = int(returns_df.index.searchsorted(ext_start, side="left"))
 
         logger.info(
             f"Backtest window: {ext_start.date()} → {end_date}"
-            f" ({n_ext} total days, warmup={warmup_days}d,"
+            f" ({len(dates)} total days, warmup={warmup_days}d,"
             f" recording from {start_date})"
         )
 
         for li, date in enumerate(dates):
-            ds      = date.strftime("%Y-%m-%d")
-            px      = px_df.loc[date].values.astype(np.float64)
-            gi      = g0 + li  # positional index in returns_df (int, always safe)
-            record  = date >= ts_start  # only write history post-start_date
+            ds     = date.strftime("%Y-%m-%d")
+            px     = px_df.loc[date].values.astype(np.float64)
+            gi     = g0 + li
+            record = date >= ts_start
 
-            # ── WARMUP PHASE ──────────────────────────────────────────────────
-            # Guard: li < warmup_days covers the pre-history window + any
-            # spillover if pre-history was shorter than warmup_days.
+            # ── WARMUP ────────────────────────────────────────────────────────
             if li < warmup_days:
                 if li == 0:
                     self._invest_bil(px)
                 dr = self._rf_step()
                 dd = (self.nav - self._peak) / self._peak
                 if record:
-                    # Rare: pre-history insufficient; warmup bleeds into recording
                     self.history.append(
                         Snap(ds, self.nav, dr, self.cash, 0.0, "WARMUP", 0.0, dd, 0)
                     )
@@ -518,7 +365,6 @@ class StandaloneBacktester:
                     )
                 continue
 
-            # Parse z_mu with NaN guard (early PCA window may produce NaN rows)
             raw_z = regime_df.loc[date, "z_mu"]
             if isinstance(raw_z, str):
                 raw_z = json.loads(raw_z)
@@ -528,34 +374,36 @@ class StandaloneBacktester:
             )
             z0 = float(z_smooth[0])
 
-            # ── HALT STATE MACHINE (BUG #1 + #3 retained) ────────────────────
+            # ── HALT STATE MACHINE ────────────────────────────────────────────
             if self._halt_phase >= 1:
                 self._halt_days += 1
                 dr = self._rf_step()
                 dd = (self.nav - self._peak) / self._peak
 
                 if self._halt_phase == 1:
+                    # Phase 1: mandatory BIL — check recovery vs halt_nav
                     if self._halt_days >= _HALT_MIN_DAYS:
                         recov = (self.nav - self._halt_nav) / (self._halt_nav + 1e-10)
                         if recov >= -_HALT_RECOVERY_THRESH:
                             logger.info(f"{ds}: Halt recovery — entering ramp-in.")
-                            self._halt_phase = 2
-                            self._ramp_days  = 0
+                            self._halt_phase    = 2
+                            self._ramp_days     = 0
+                            # BUG #13 FIX: snapshot NAV at ramp entry for breach guard
+                            self._ramp_entry_nav = self.nav
 
                 elif self._halt_phase == 2:
+                    # Phase 2: linear MVO ramp 25% → 100% over _HALT_RAMP_DAYS
                     self._ramp_days += 1
                     scale = min(0.25 + 0.75 * self._ramp_days / _HALT_RAMP_DAYS, 1.0)
 
-                    # BUG #10 FIX: covariance excludes today (gi, not gi+1)
+                    # FIX #10: covariance excludes today (gi, not gi+1)
                     cov_d = _cov(returns_df.iloc[max(0, gi - _COV_WINDOW) : gi])
                     vol_d = (
                         returns_df.iloc[max(0, gi - 21) : gi]
-                        .std(axis=0)
-                        .fillna(0.01)
-                        .values.astype(np.float64)
+                        .std(axis=0).fillna(0.01).values.astype(np.float64)
                     )
-                    adv   = np.maximum(10_000_000.0 / (px + 1e-10), 1.0)
-                    alp   = alpha_df.loc[date].values.astype(np.float64)
+                    adv = np.maximum(10_000_000.0 / (px + 1e-10), 1.0)
+                    alp = alpha_df.loc[date].values.astype(np.float64)
 
                     t_mvo  = _mvo_weights(alp, cov_d, z0, vol_d, scale)
                     target = scale * t_mvo + (1.0 - scale) * _BIL_WEIGHT
@@ -567,9 +415,17 @@ class StandaloneBacktester:
                     dr  = self._mtm(px)
                     dd  = (self.nav - self._peak) / self._peak
 
-                    if dd <= -_HALT_RECOVERY_THRESH:
+                    # ── BUG #13 FIX: breach relative to ramp entry NAV ────────
+                    # Guard: "did this ramp-in period itself lose >10%?"
+                    # NOT: "are we still below the all-time peak?"
+                    ramp_local_dd = (
+                        (self.nav - self._ramp_entry_nav)
+                        / (self._ramp_entry_nav + 1e-10)
+                    )
+                    if ramp_local_dd <= -_HALT_RECOVERY_THRESH:
                         logger.warning(
-                            f"{ds}: Ramp-in breach DD={dd:.2%}. Back to mandatory BIL."
+                            f"{ds}: Ramp-in breach ({ramp_local_dd:.2%} vs entry). "
+                            "Returning to mandatory BIL."
                         )
                         self._halt_phase = 1
                         self._halt_days  = 0
@@ -596,20 +452,16 @@ class StandaloneBacktester:
                 continue
 
             # ── ACTIVE TRADING ────────────────────────────────────────────────
-            # BUG #10 FIX: W-day window ending at yesterday's close (gi exclusive).
             cov_d = _cov(returns_df.iloc[max(0, gi - _COV_WINDOW) : gi])
             vol_d = (
                 returns_df.iloc[max(0, gi - 21) : gi]
-                .std(axis=0)
-                .fillna(0.01)
-                .values.astype(np.float64)
+                .std(axis=0).fillna(0.01).values.astype(np.float64)
             )
             adv = np.maximum(10_000_000.0 / (px + 1e-10), 1.0)
             alp = alpha_df.loc[date].values.astype(np.float64)
 
             target = _mvo_weights(alp, cov_d, z0, vol_d)
 
-            # FIX #5 (retained): unconditional rebalance on regime change
             regime_changed = s_label != self._prev_regime
             to  = self._rebalance(target, px, vol_d, adv, force=regime_changed)
             dr  = self._mtm(px)
@@ -629,15 +481,14 @@ class StandaloneBacktester:
                     Snap(ds, self.nav, dr, self.cash, to, s_label, z0, dd, 0)
                 )
 
-        # Sanity check: if all history is WARMUP we likely have a data problem
         active_days = sum(
-            1 for h in self.history if h.regime_label not in ("WARMUP", "NO_SIGNAL")
+            1 for h in self.history
+            if h.regime_label not in ("WARMUP", "NO_SIGNAL", "HALTED_BIL")
+            and not h.regime_label.startswith("RAMP")
         )
         if self.history and active_days == 0:
             logger.warning(
-                "⚠️  All recorded days are WARMUP/NO_SIGNAL. "
-                "Check that regime_df and alpha_df cover the recording window. "
-                f"Recording window: {start_date} → {end_date}. "
+                "⚠️  All recorded days are WARMUP/NO_SIGNAL/HALTED_BIL. "
                 f"regime_df range: {regime_df.index.min().date()} → "
                 f"{regime_df.index.max().date()}"
             )
@@ -661,7 +512,6 @@ class StandaloneBacktester:
             }
             for h in self.history
         ])
-
         df["date"] = pd.to_datetime(df["date"])
         df = df.set_index("date").sort_index()
         if len(df) < 10:
@@ -677,7 +527,7 @@ class StandaloneBacktester:
         vol  = float(r.std() * np.sqrt(_TRADING_DAYS_YEAR))
         sr   = float((ex.mean() / (ex.std() + 1e-10)) * np.sqrt(_TRADING_DAYS_YEAR))
 
-        dn   = ex[ex < 0]
+        dn     = ex[ex < 0]
         sort_r = float(
             (ex.mean() / (dn.std() + 1e-10)) * np.sqrt(_TRADING_DAYS_YEAR)
             if len(dn) > 1 else 0.0
@@ -688,21 +538,24 @@ class StandaloneBacktester:
         dd_s = (cv - rm) / (rm + 1e-10)
         mdd  = float(dd_s.min())
         cal  = cagr / (abs(mdd) + 1e-10)
-
         mdd_dur = _mct((dd_s < 0).values)
-        v95     = float(np.percentile(r, 5))
-        cvar95  = float(r[r <= v95].mean()) if (r <= v95).any() else v95
-        hit     = float((r > rf).mean())
-        to      = float(df["turnover"].mean())
 
-        # BUG #12 FIX: Bailey & López de Prado (2012) PSR
-        skew = float(stats.skew(r))
-        kurt_raw = float(stats.kurtosis(r, fisher=False))   # raw kurtosis (excess+3)
-        psr  = _psr(sr, n, skew, kurt_raw)
+        v95    = float(np.percentile(r, 5))
+        cvar95 = float(r[r <= v95].mean()) if (r <= v95).any() else v95
+        hit    = float((r > rf).mean())
+        to     = float(df["turnover"].mean())
+
+        skew     = float(stats.skew(r))
+        kurt_raw = float(stats.kurtosis(r, fisher=False))
+        psr      = _psr(sr, n, skew, kurt_raw)
 
         active_pct = float((
             ~df["regime_label"].isin(["WARMUP", "NO_SIGNAL", "HALTED_BIL"])
+            & ~df["regime_label"].str.startswith("RAMP")
         ).mean())
+
+        halt_pct = float(df["regime_label"].isin(["HALTED_BIL"]).mean())
+        ramp_pct = float(df["regime_label"].str.startswith("RAMP").mean())
 
         m = {
             "CAGR":                f"{cagr:+.2%}",
@@ -719,7 +572,9 @@ class StandaloneBacktester:
             "PSR (SR>0)":          f"{psr:.4f}",
             "Skewness":            f"{skew:.3f}",
             "Excess Kurtosis":     f"{kurt_raw - 3.0:.3f}",
-            "Active Trading Days": f"{active_pct:.1%}",
+            "Active Trading %":    f"{active_pct:.1%}",
+            "Halted BIL %":        f"{halt_pct:.1%}",
+            "Ramp-in %":           f"{ramp_pct:.1%}",
             "Final NAV":           f"${df['portfolio_value'].iloc[-1]:,.2f}",
             "Trading Days":        str(n),
         }
@@ -730,8 +585,6 @@ class StandaloneBacktester:
         return df
 
 
-# ── Max consecutive True (drawdown duration) ─────────────────────────────────
-
 def _mct(a: np.ndarray) -> int:
     mx = cur = 0
     for v in a:
@@ -740,18 +593,13 @@ def _mct(a: np.ndarray) -> int:
     return mx
 
 
-# ── Walk-forward fold generator ───────────────────────────────────────────────
+# ── Walk-forward folds ────────────────────────────────────────────────────────
 
 def _wf_folds(
     dates: pd.DatetimeIndex,
     ism: int = 18,
     oosm: int = 6,
 ) -> List[Tuple[str, str, str, str]]:
-    """
-    Expanding IS / rolling OOS walk-forward.
-    IS always anchored to dates[0] (prevents IS Sharpe shrinkage artefacts).
-    OOS steps forward by oosm months each fold.
-    """
     oos = int(oosm * 21)
     ei  = int(ism * 21)
     folds: List[Tuple[str, str, str, str]] = []
@@ -772,10 +620,31 @@ def _sharpe(r: np.ndarray) -> float:
     return float((ex.mean() / (ex.std() + 1e-10)) * np.sqrt(_TRADING_DAYS_YEAR))
 
 
+def _wf_verdict(avg_is: float, avg_oos: float) -> str:
+    """
+    BUG #16 FIX: Multi-branch verdict that handles negative IS Sharpe correctly.
+
+    When IS is negative (e.g., IS period contains a halt), the signed ratio
+    avg_oos / avg_is produces a negative number even if OOS is positive, which
+    is misleading. Apply the following logic instead:
+    """
+    if avg_oos > 0.5:
+        return "✅ OOS profitable"
+    if avg_oos > 0.0 and avg_is < 0.0:
+        return "⚠️  IS dominated by structural event; OOS signal positive"
+    if avg_is > 0.0:
+        ratio = avg_oos / avg_is
+        if ratio > 0.5:
+            return f"✅ IS/OOS ratio={ratio:.3f} acceptable"
+        else:
+            return f"⚠️  overfitting (IS/OOS ratio={ratio:.3f})"
+    return "❌ negative OOS alpha"
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:
-    logger.info("══════ Fortress v5 — Standalone Backtest v3 (7 bugs patched) ══════")
+    logger.info("══════ Fortress v5 — Standalone Backtest v4 (BUG #13 + #16 fixed) ══════")
     _OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     required = {
@@ -786,28 +655,24 @@ def main() -> None:
     }
     for name, p in required.items():
         if not p.exists():
-            logger.error(f"Missing cache file '{name}': {p}. Run precompute scripts first.")
+            logger.error(f"Missing: {p}. Run precompute scripts first.")
             sys.exit(1)
 
-    # ── Load & normalise (BUG #7 FIX applied here) ───────────────────────────
     prices_df  = _normalize_index(pd.read_parquet(required["prices"]))
     returns_df = _normalize_index(pd.read_parquet(required["returns"]))
     regime_df  = _normalize_index(pd.read_parquet(required["regime"]))
     alpha_df   = _normalize_index(pd.read_parquet(required["alpha"]))
-
-    # Strip alpha_ prefix from column names
     alpha_df.columns = [c.replace("alpha_", "") for c in alpha_df.columns]
 
     logger.info(
-        f"Loaded data | prices: {len(prices_df)}d | returns: {len(returns_df)}d"
-        f" | regime: {len(regime_df)}d | alpha: {len(alpha_df)}d"
+        f"Loaded | prices:{len(prices_df)}d  returns:{len(returns_df)}d"
+        f"  regime:{len(regime_df)}d  alpha:{len(alpha_df)}d"
     )
     logger.info(
-        f"Date ranges | prices: {prices_df.index.min().date()} → {prices_df.index.max().date()}"
-        f" | regime: {regime_df.index.min().date()} → {regime_df.index.max().date()}"
+        f"Ranges | prices:{prices_df.index.min().date()}→{prices_df.index.max().date()}"
+        f"  regime:{regime_df.index.min().date()}→{regime_df.index.max().date()}"
     )
 
-    # ── Main backtest (2020-01-02 → 2024-12-31, warmup on 2019 data) ─────────
     eng = StandaloneBacktester()
     ts  = eng.run(
         prices_df, returns_df, regime_df, alpha_df,
@@ -815,23 +680,21 @@ def main() -> None:
         end_date="2024-12-31",
         warmup_days=_WARMUP_DAYS,
     )
-
     if ts.empty:
-        logger.error("Backtest produced empty tearsheet. Aborting.")
+        logger.error("Backtest produced empty tearsheet.")
         sys.exit(1)
 
     ts.to_csv(_TEARSHEET)
     logger.info(f"✅ Tearsheet → {_TEARSHEET} ({len(ts)} rows)")
 
-    # ── Walk-forward validation ───────────────────────────────────────────────
+    # ── Walk-forward ──────────────────────────────────────────────────────────
     logger.info("Running walk-forward validation...")
-    common   = prices_df.index.intersection(alpha_df.index)
-    wf_mask  = (common >= "2019-01-02") & (common <= "2024-12-31")
-    folds    = _wf_folds(common[wf_mask])
+    common  = prices_df.index.intersection(alpha_df.index)
+    wf_mask = (common >= "2019-01-02") & (common <= "2024-12-31")
+    folds   = _wf_folds(common[wf_mask])
     results: List[WFFold] = []
 
     for fid, (is_s, is_e, oos_s, oos_e) in enumerate(folds):
-        # BUG #11 FIX: use _WF_WARMUP_DAYS (21d) so OOS folds have active trading
         t_is = StandaloneBacktester().run(
             prices_df, returns_df, regime_df, alpha_df,
             is_s, is_e, warmup_days=_WF_WARMUP_DAYS,
@@ -840,7 +703,6 @@ def main() -> None:
             prices_df, returns_df, regime_df, alpha_df,
             oos_s, oos_e, warmup_days=_WF_WARMUP_DAYS,
         )
-
         if t_oo.empty or len(t_oo) < 5:
             continue
 
@@ -849,52 +711,38 @@ def main() -> None:
         tot  = t_oo["portfolio_value"].iloc[-1] / _INITIAL_CAPITAL - 1.0
         cagr = (1.0 + tot) ** (_TRADING_DAYS_YEAR / n_oo) - 1.0
         mdd  = float(
-            (
-                (t_oo["portfolio_value"] - t_oo["portfolio_value"].cummax())
-                / (t_oo["portfolio_value"].cummax() + 1e-10)
-            ).min()
+            ((t_oo["portfolio_value"] - t_oo["portfolio_value"].cummax())
+             / (t_oo["portfolio_value"].cummax() + 1e-10)).min()
         )
-
         is_sr  = _sharpe(t_is["daily_return"].values) if not t_is.empty else 0.0
         oos_sr = _sharpe(r_oo)
 
-        results.append(
-            WFFold(
-                fid + 1, is_s, is_e, oos_s, oos_e,
-                round(is_sr, 4), round(oos_sr, 4),
-                round(cagr, 4), round(mdd, 4),
-            )
-        )
+        results.append(WFFold(
+            fid + 1, is_s, is_e, oos_s, oos_e,
+            round(is_sr, 4), round(oos_sr, 4), round(cagr, 4), round(mdd, 4),
+        ))
         logger.info(
-            f"  F{fid+1}: IS SR={is_sr:.3f} | "
-            f"OOS SR={oos_sr:.3f}  CAGR={cagr:.2%}  MaxDD={mdd:.2%}"
+            f"  F{fid+1}: IS SR={is_sr:.3f} | OOS SR={oos_sr:.3f}"
+            f"  CAGR={cagr:.2%}  MaxDD={mdd:.2%}"
         )
 
     pd.DataFrame([vars(r) for r in results]).to_csv(_WF_FOLDS, index=False)
     if results:
-        avg_oos = np.mean([f.oos_sharpe for f in results])
-        avg_is  = np.mean([f.is_sharpe  for f in results])
-        ratio   = avg_oos / (avg_is + 1e-10)
-        verdict = "✅ acceptable" if ratio > 0.5 else "⚠️  overfitting"
+        avg_oos = float(np.mean([f.oos_sharpe for f in results]))
+        avg_is  = float(np.mean([f.is_sharpe  for f in results]))
+        verdict = _wf_verdict(avg_is, avg_oos)
         logger.info(
-            f"WF summary: avg IS={avg_is:.3f} | avg OOS={avg_oos:.3f}"
-            f" | IS/OOS ratio={ratio:.3f} ({verdict})"
+            f"WF summary: avg IS={avg_is:.3f} | avg OOS={avg_oos:.3f} | {verdict}"
         )
 
-    # ── Stress-test stub ─────────────────────────────────────────────────────
     r_arr = ts["daily_return"].values
     v95   = float(np.percentile(r_arr, 5))
     with open(_STRESS_OUT, "w") as f:
-        json.dump(
-            {
-                "mode":    "stub",
-                "var_95":  v95,
-                "cvar_95": float(r_arr[r_arr <= v95].mean()),
-                "note":    "Run training/train_world_model.py for SDE stress.",
-            },
-            f,
-            indent=2,
-        )
+        json.dump({
+            "mode": "stub", "var_95": v95,
+            "cvar_95": float(r_arr[r_arr <= v95].mean()),
+            "note": "Run training/train_world_model.py for SDE stress.",
+        }, f, indent=2)
 
     logger.info("✅ Done. Run scripts/visualize_tearsheet.py next.")
 

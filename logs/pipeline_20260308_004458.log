@@ -1,0 +1,585 @@
+[INFO] Fortress v5 — Backtest Pipeline | Sun Mar  8 00:44:58 CET 2026
+[INFO] Log: /home/alexr/fortress_v5/logs/pipeline_20260308_004458.log
+
+[0;36m══════════════════════════════════════════[0m
+[0;36m  Stage 0: Forensic Data Audit[0m
+[0;36m══════════════════════════════════════════[0m
+2026-03-08 00:44:59,377 - INFO - ══════ Fortress v5 — Forensic Look-Ahead Audit ══════
+2026-03-08 00:44:59,420 - WARNING - TimescaleDB unreachable (localhost/fortress): password authentication failed for user "postgres". Falling back to synthetic parquet audit.
+2026-03-08 00:44:59,420 - INFO - Running synthetic parquet integrity audit...
+2026-03-08 00:44:59,484 - INFO -   Loaded regime_posteriors.parquet: 1,510 rows, 2019-01-02 → 2024-12-31
+2026-03-08 00:44:59,489 - INFO -   Loaded alpha_signals.parquet: 1,510 rows, 2019-01-02 → 2024-12-31
+2026-03-08 00:44:59,493 - INFO -   Loaded prices_wide.parquet: 1,510 rows, 2019-01-02 → 2024-12-31
+2026-03-08 00:44:59,496 - INFO -   Loaded returns_wide.parquet: 1,510 rows, 2019-01-02 → 2024-12-31
+2026-03-08 00:44:59,508 - INFO -   Loaded market_data.parquet: 37,750 rows, 1510 dates × 25 tickers, 2019-01-02 → 2024-12-31  [long-format]
+2026-03-08 00:44:59,516 - INFO - ✅ All cache files are temporally consistent.
+2026-03-08 00:44:59,517 - INFO - Forensic Audit Passed. ZERO look-ahead violations.
+[0;32m[OK][0m Stage 0: Forensic Data Audit complete.
+
+[0;36m══════════════════════════════════════════[0m
+[0;36m  Stage 1: Regime Posterior Precomputation[0m
+[0;36m══════════════════════════════════════════[0m
+2026-03-08 00:45:00,550 - INFO - ══════ Fortress v5 — Regime Posterior Precomputation ══════
+2026-03-08 00:45:00,550 - INFO - Window: 2019-01-02 → 2024-12-31
+2026-03-08 00:45:00,795 - INFO - Trading calendar: 1510 days
+2026-03-08 00:45:00,795 - INFO - Weights not found at models/weights/mamba_kan_latest.pt. Running in Synthetic Mode.
+2026-03-08 00:45:00,795 - INFO - Synthetic Mode active — generating regime-switching GBM market data.
+2026-03-08 00:45:00,795 - INFO - Building cross-asset correlation matrix (5-factor model)...
+2026-03-08 00:45:00,796 - INFO - Sampling Markov regime sequence...
+2026-03-08 00:45:00,805 - INFO - Regime distribution: {'bull_low_vol': 1421, 'bull_high_vol': 66, 'bear': 14, 'crisis': 9}
+2026-03-08 00:45:00,805 - INFO - Simulating 1510 days × 25 assets via Markov-switching GBM...
+2026-03-08 00:45:00,908 - INFO - ✅ Saved prices/returns → research/outputs/cache/prices_wide.parquet, research/outputs/cache/returns_wide.parquet
+2026-03-08 00:45:00,908 - INFO - Building long-format market_data parquet...
+2026-03-08 00:45:01,926 - INFO - ✅ Saved market_data → research/outputs/cache/market_data.parquet (37,750 rows)
+2026-03-08 00:45:01,926 - INFO - Constructing 52-dim obs vectors (rolling causal statistics)...
+2026-03-08 00:45:02,313 - INFO - Computing PCA surrogate regime posteriors (window=63d, dims=16)...
+2026-03-08 00:45:02,463 - INFO -   PCA posterior [200/1510] date=2019-10-17 z_mu[0]=1.962
+2026-03-08 00:45:02,622 - INFO -   PCA posterior [400/1510] date=2020-08-04 z_mu[0]=-1.937
+2026-03-08 00:45:02,780 - INFO -   PCA posterior [600/1510] date=2021-05-20 z_mu[0]=-1.995
+2026-03-08 00:45:02,939 - INFO -   PCA posterior [800/1510] date=2022-03-07 z_mu[0]=1.991
+2026-03-08 00:45:03,100 - INFO -   PCA posterior [1000/1510] date=2022-12-20 z_mu[0]=-0.099
+2026-03-08 00:45:03,259 - INFO -   PCA posterior [1200/1510] date=2023-10-09 z_mu[0]=1.962
+2026-03-08 00:45:03,416 - INFO -   PCA posterior [1400/1510] date=2024-07-26 z_mu[0]=1.980
+2026-03-08 00:45:03,593 - INFO - ✅ Saved regime posteriors → research/outputs/cache/regime_posteriors.parquet (1,510 rows)
+2026-03-08 00:45:03,594 - INFO - Regime label distribution (PCA k-means):
+2026-03-08 00:45:03,594 - INFO -   crisis              :  686 days (45.4%)
+2026-03-08 00:45:03,594 - INFO -   bull_low_vol        :  682 days (45.2%)
+2026-03-08 00:45:03,594 - INFO -   bull_high_vol       :   78 days (5.2%)
+2026-03-08 00:45:03,594 - INFO -   bear                :   64 days (4.2%)
+2026-03-08 00:45:03,594 - INFO - Precompute Stage 1 complete. Run precompute_alpha_signals.py next.
+[0;32m[OK][0m Stage 1: Regime Posterior Precomputation complete.
+
+[0;36m══════════════════════════════════════════[0m
+[0;36m  Stage 2: Alpha Signal Precomputation[0m
+[0;36m══════════════════════════════════════════[0m
+2026-03-08 00:45:03,918 - INFO - ══════ Fortress v5 — Alpha Signal Precomputation ══════
+2026-03-08 00:45:03,918 - INFO - Loading cached market data...
+2026-03-08 00:45:03,935 - INFO - Loading cached regime posteriors...
+2026-03-08 00:45:03,940 - INFO - Market data: 1510 days × 25 assets | Regime posteriors: 1510 rows
+2026-03-08 00:45:03,943 - INFO - Aligned dataset: 1510 trading days
+2026-03-08 00:45:03,944 - INFO - GATv2 weights not found at models/weights/gat_alpha_latest.pt. Running in Surrogate Mode.
+2026-03-08 00:45:03,944 - INFO - Surrogate Mode: computing 6-factor regime-conditioned alpha model...
+2026-03-08 00:45:03,944 - INFO - Computing Factor 1:  Cross-Sectional Momentum (12-1 month)...
+2026-03-08 00:45:03,957 - INFO - Computing Factor 1b: Cross-Sectional Momentum (6-1 month)...
+2026-03-08 00:45:03,969 - INFO - Computing Factor 2:  Short-Term Reversal (1 month)...
+2026-03-08 00:45:03,981 - INFO - Computing Factor 3:  Low-Volatility Anomaly (63-day realised vol)...
+2026-03-08 00:45:03,993 - INFO - Computing Factor 4:  Fixed-Income Carry (BUG #18 FIX)...
+2026-03-08 00:45:03,993 - INFO - Computing Factors 5/6: Regime Tilt + Price Trend Override (BUG #17 FIX)...
+2026-03-08 00:45:03,995 - INFO -   [0/1510] 2019-01-02 | z_pca=+0.00 trend=+0.00 z_eff=+0.00 | Regime=bull_high_vol | Top: HYG(0.38), VNQ(0.33), PDBC(0.29) | Bot: SPY(-0.42), QQQ(-0.39), IWM(-0.36)
+2026-03-08 00:45:04,017 - INFO -   [200/1510] 2019-10-17 | z_pca=+1.96 trend=+0.48 z_eff=+1.71 | Regime=bull_low_vol | Top: HYG(1.00), LQD(0.97), XLP(0.95) | Bot: USO(-0.96), SLV(-0.90), GLD(-0.89)
+2026-03-08 00:45:04,046 - INFO -   [400/1510] 2020-08-04 | z_pca=-1.94 trend=+1.52 z_eff=-0.10 | Regime=crisis | Top: SPY(0.35), HYG(0.30), QQQ(0.29) | Bot: SLV(-0.50), USO(-0.33), GLD(-0.30)
+2026-03-08 00:45:04,075 - INFO -   [600/1510] 2021-05-20 | z_pca=-2.00 trend=+1.41 z_eff=-0.32 | Regime=crisis | Top: LQD(0.42), HYG(0.33), VIXY(0.25) | Bot: IWM(-0.41), EEM(-0.35), SLV(-0.29)
+2026-03-08 00:45:04,104 - INFO -   [800/1510] 2022-03-07 | z_pca=+1.99 trend=+1.80 z_eff=+1.87 | Regime=bull_low_vol | Top: XLE(0.99), VNQ(0.98), XLK(0.98) | Bot: SHY(-0.95), IEF(-0.95), GLD(-0.94)
+2026-03-08 00:45:04,132 - INFO -   [1000/1510] 2022-12-20 | z_pca=-0.10 trend=+0.62 z_eff=+0.06 | Regime=bull_high_vol | Top: PDBC(0.72), USO(0.58), EFA(0.44) | Bot: IWM(-0.53), TLT(-0.48), XLF(-0.36)
+2026-03-08 00:45:04,160 - INFO -   [1200/1510] 2023-10-09 | z_pca=+1.96 trend=-1.40 z_eff=+0.32 | Regime=bull_low_vol | Top: XLP(0.77), EFA(0.72), VTV(0.68) | Bot: SLV(-0.81), USO(-0.78), GLD(-0.72)
+2026-03-08 00:45:04,189 - INFO -   [1400/1510] 2024-07-26 | z_pca=+1.98 trend=+0.69 z_eff=+1.67 | Regime=bull_low_vol | Top: XLK(0.98), HYG(0.98), SPY(0.98) | Bot: GLD(-0.96), TLT(-0.94), USO(-0.92)
+2026-03-08 00:45:04,205 - INFO - Price-trend override: bull=50.3%  neutral=34.5%  bear=15.2% | mean=+0.481  std=0.928
+2026-03-08 00:45:04,209 - INFO - ✅ Alpha signals saved → research/outputs/cache/alpha_signals.parquet (1510 rows × 25 assets)
+2026-03-08 00:45:04,209 - INFO - Alpha signal summary (time-averaged per asset):
+2026-03-08 00:45:04,210 - INFO -   LQD   : +██████ (+0.349)
+2026-03-08 00:45:04,210 - INFO -   HYG   : +█████ (+0.289)
+2026-03-08 00:45:04,210 - INFO -   BIL   : +████ (+0.221)
+2026-03-08 00:45:04,210 - INFO -   SHV   : +████ (+0.221)
+2026-03-08 00:45:04,210 - INFO -   SPY   : +███ (+0.160)
+2026-03-08 00:45:04,210 - INFO -   XLI   : +███ (+0.158)
+2026-03-08 00:45:04,210 - INFO -   VTV   : +███ (+0.155)
+2026-03-08 00:45:04,210 - INFO -   XLV   : +███ (+0.154)
+2026-03-08 00:45:04,210 - INFO -   EFA   : +███ (+0.152)
+2026-03-08 00:45:04,210 - INFO -   XLP   : +██ (+0.150)
+2026-03-08 00:45:04,210 - INFO -   XLK   : +██ (+0.141)
+2026-03-08 00:45:04,210 - INFO -   VNQ   : +██ (+0.129)
+2026-03-08 00:45:04,210 - INFO -   QQQ   : +██ (+0.111)
+2026-03-08 00:45:04,210 - INFO -   XLF   : +█ (+0.057)
+2026-03-08 00:45:04,210 - INFO -   IWM   : +█ (+0.053)
+2026-03-08 00:45:04,211 - INFO -   EEM   : + (+0.028)
+2026-03-08 00:45:04,211 - INFO -   SHY   : + (+0.001)
+2026-03-08 00:45:04,211 - INFO -   PDBC  : - (-0.011)
+2026-03-08 00:45:04,211 - INFO -   XLE   : -█ (-0.068)
+2026-03-08 00:45:04,211 - INFO -   IEF   : -█ (-0.069)
+2026-03-08 00:45:04,211 - INFO -   VIXY  : -█ (-0.094)
+2026-03-08 00:45:04,211 - INFO -   TLT   : -██ (-0.110)
+2026-03-08 00:45:04,211 - INFO -   USO   : -██ (-0.130)
+2026-03-08 00:45:04,211 - INFO -   GLD   : -███ (-0.165)
+2026-03-08 00:45:04,211 - INFO -   SLV   : -████ (-0.245)
+2026-03-08 00:45:04,211 - INFO - Precompute Stage 2 complete. Run run_standalone_backtest.py next.
+[0;32m[OK][0m Stage 2: Alpha Signal Precomputation complete.
+
+[0;36m══════════════════════════════════════════[0m
+[0;36m  Stage 3: Event-Driven Standalone Backtest[0m
+[0;36m══════════════════════════════════════════[0m
+2026-03-08 00:45:04,691 - INFO - ══════ Fortress v5 — Standalone Backtest v5 (BUG #17-#19 + PATCH v5) ══════
+2026-03-08 00:45:04,718 - INFO - Loaded | prices:1510d  returns:1510d  regime:1510d  alpha:1510d
+2026-03-08 00:45:04,718 - INFO - Ranges | prices:2019-01-02→2024-12-31  regime:2019-01-02→2024-12-31
+2026-03-08 00:45:04,719 - INFO - Backtest window: 2019-07-03 → 2024-12-31 (1384 total days, warmup=126d, recording from 2020-01-02)
+2026-03-08 00:45:08,171 - INFO - ══ TEARSHEET ══
+2026-03-08 00:45:08,171 - INFO -   CAGR                         +7.52%
+2026-03-08 00:45:08,171 - INFO -   Ann. Volatility              11.94%
+2026-03-08 00:45:08,171 - INFO -   Sharpe Ratio                 0.206
+2026-03-08 00:45:08,171 - INFO -   Sortino Ratio                0.329
+2026-03-08 00:45:08,171 - INFO -   Calmar Ratio                 0.410
+2026-03-08 00:45:08,171 - INFO -   Max Drawdown                 -18.35%
+2026-03-08 00:45:08,171 - INFO -   Max DD Duration              657 days
+2026-03-08 00:45:08,171 - INFO -   VaR-95 (daily)               -1.10%
+2026-03-08 00:45:08,171 - INFO -   CVaR-95 (daily)              -1.59%
+2026-03-08 00:45:08,171 - INFO -   Hit Rate                     48.97%
+2026-03-08 00:45:08,171 - INFO -   Avg Daily Turnover           0.0117%
+2026-03-08 00:45:08,171 - INFO -   PSR (SR>0)                   1.0000
+2026-03-08 00:45:08,171 - INFO -   Skewness                     0.846
+2026-03-08 00:45:08,171 - INFO -   Excess Kurtosis              6.239
+2026-03-08 00:45:08,171 - INFO -   Active Trading %             100.0%
+2026-03-08 00:45:08,171 - INFO -   Halted BIL %                 0.0%
+2026-03-08 00:45:08,171 - INFO -   Ramp-in %                    0.0%
+2026-03-08 00:45:08,171 - INFO -   Final NAV                    $143,627.89
+2026-03-08 00:45:08,171 - INFO -   Trading Days                 1258
+2026-03-08 00:45:08,184 - INFO - ✅ Tearsheet → research/outputs/backtest_tearsheet.csv (1258 rows)
+2026-03-08 00:45:08,184 - INFO - Running walk-forward validation...
+2026-03-08 00:45:08,185 - INFO - Backtest window: 2019-01-02 → 2020-07-01 (378 total days, warmup=21d, recording from 2019-01-02)
+2026-03-08 00:45:09,207 - INFO - ══ TEARSHEET ══
+2026-03-08 00:45:09,207 - INFO -   CAGR                         -5.39%
+2026-03-08 00:45:09,207 - INFO -   Ann. Volatility              8.72%
+2026-03-08 00:45:09,207 - INFO -   Sharpe Ratio                 -1.164
+2026-03-08 00:45:09,207 - INFO -   Sortino Ratio                -1.563
+2026-03-08 00:45:09,207 - INFO -   Calmar Ratio                 -0.323
+2026-03-08 00:45:09,207 - INFO -   Max Drawdown                 -16.69%
+2026-03-08 00:45:09,207 - INFO -   Max DD Duration              344 days
+2026-03-08 00:45:09,207 - INFO -   VaR-95 (daily)               -1.02%
+2026-03-08 00:45:09,207 - INFO -   CVaR-95 (daily)              -1.35%
+2026-03-08 00:45:09,207 - INFO -   Hit Rate                     42.86%
+2026-03-08 00:45:09,207 - INFO -   Avg Daily Turnover           0.0125%
+2026-03-08 00:45:09,207 - INFO -   PSR (SR>0)                   0.0000
+2026-03-08 00:45:09,207 - INFO -   Skewness                     -0.245
+2026-03-08 00:45:09,207 - INFO -   Excess Kurtosis              1.930
+2026-03-08 00:45:09,207 - INFO -   Active Trading %             94.4%
+2026-03-08 00:45:09,207 - INFO -   Halted BIL %                 0.0%
+2026-03-08 00:45:09,207 - INFO -   Ramp-in %                    0.0%
+2026-03-08 00:45:09,207 - INFO -   Final NAV                    $92,030.28
+2026-03-08 00:45:09,207 - INFO -   Trading Days                 378
+2026-03-08 00:45:09,208 - INFO - Backtest window: 2020-06-03 → 2020-12-30 (147 total days, warmup=21d, recording from 2020-07-02)
+2026-03-08 00:45:09,568 - INFO - ══ TEARSHEET ══
+2026-03-08 00:45:09,568 - INFO -   CAGR                         -20.99%
+2026-03-08 00:45:09,568 - INFO -   Ann. Volatility              15.37%
+2026-03-08 00:45:09,568 - INFO -   Sharpe Ratio                 -1.836
+2026-03-08 00:45:09,568 - INFO -   Sortino Ratio                -2.899
+2026-03-08 00:45:09,568 - INFO -   Calmar Ratio                 -1.313
+2026-03-08 00:45:09,568 - INFO -   Max Drawdown                 -15.98%
+2026-03-08 00:45:09,568 - INFO -   Max DD Duration              109 days
+2026-03-08 00:45:09,568 - INFO -   VaR-95 (daily)               -1.59%
+2026-03-08 00:45:09,568 - INFO -   CVaR-95 (daily)              -2.05%
+2026-03-08 00:45:09,568 - INFO -   Hit Rate                     42.86%
+2026-03-08 00:45:09,568 - INFO -   Avg Daily Turnover           0.0125%
+2026-03-08 00:45:09,568 - INFO -   PSR (SR>0)                   0.0000
+2026-03-08 00:45:09,568 - INFO -   Skewness                     1.216
+2026-03-08 00:45:09,568 - INFO -   Excess Kurtosis              8.345
+2026-03-08 00:45:09,568 - INFO -   Active Trading %             100.0%
+2026-03-08 00:45:09,568 - INFO -   Halted BIL %                 0.0%
+2026-03-08 00:45:09,568 - INFO -   Ramp-in %                    0.0%
+2026-03-08 00:45:09,568 - INFO -   Final NAV                    $88,887.40
+2026-03-08 00:45:09,568 - INFO -   Trading Days                 126
+2026-03-08 00:45:09,568 - INFO -   F1: IS SR=-1.164 | OOS SR=-1.836  CAGR=-20.99%  MaxDD=-15.98%
+2026-03-08 00:45:09,569 - INFO - Backtest window: 2019-01-02 → 2020-12-30 (504 total days, warmup=21d, recording from 2019-01-02)
+2026-03-08 00:45:10,822 - CRITICAL - HALT triggered 2020-11-10: DD=-20.84%
+2026-03-08 00:45:10,827 - INFO - ══ TEARSHEET ══
+2026-03-08 00:45:10,827 - INFO -   CAGR                         -9.99%
+2026-03-08 00:45:10,827 - INFO -   Ann. Volatility              10.46%
+2026-03-08 00:45:10,827 - INFO -   Sharpe Ratio                 -1.431
+2026-03-08 00:45:10,827 - INFO -   Sortino Ratio                -1.898
+2026-03-08 00:45:10,827 - INFO -   Calmar Ratio                 -0.479
+2026-03-08 00:45:10,827 - INFO -   Max Drawdown                 -20.84%
+2026-03-08 00:45:10,827 - INFO -   Max DD Duration              470 days
+2026-03-08 00:45:10,827 - INFO -   VaR-95 (daily)               -1.21%
+2026-03-08 00:45:10,827 - INFO -   CVaR-95 (daily)              -1.61%
+2026-03-08 00:45:10,827 - INFO -   Hit Rate                     39.48%
+2026-03-08 00:45:10,827 - INFO -   Avg Daily Turnover           0.0114%
+2026-03-08 00:45:10,827 - INFO -   PSR (SR>0)                   0.0000
+2026-03-08 00:45:10,827 - INFO -   Skewness                     0.726
+2026-03-08 00:45:10,828 - INFO -   Excess Kurtosis              11.515
+2026-03-08 00:45:10,828 - INFO -   Active Trading %             89.1%
+2026-03-08 00:45:10,828 - INFO -   Halted BIL %                 6.7%
+2026-03-08 00:45:10,828 - INFO -   Ramp-in %                    0.0%
+2026-03-08 00:45:10,828 - INFO -   Final NAV                    $81,018.17
+2026-03-08 00:45:10,828 - INFO -   Trading Days                 504
+2026-03-08 00:45:10,828 - INFO - Backtest window: 2020-12-01 → 2021-07-01 (147 total days, warmup=21d, recording from 2020-12-31)
+2026-03-08 00:45:11,163 - INFO - ══ TEARSHEET ══
+2026-03-08 00:45:11,163 - INFO -   CAGR                         +40.33%
+2026-03-08 00:45:11,163 - INFO -   Ann. Volatility              10.26%
+2026-03-08 00:45:11,163 - INFO -   Sharpe Ratio                 2.787
+2026-03-08 00:45:11,163 - INFO -   Sortino Ratio                5.078
+2026-03-08 00:45:11,163 - INFO -   Calmar Ratio                 8.310
+2026-03-08 00:45:11,163 - INFO -   Max Drawdown                 -4.85%
+2026-03-08 00:45:11,163 - INFO -   Max DD Duration              30 days
+2026-03-08 00:45:11,163 - INFO -   VaR-95 (daily)               -0.88%
+2026-03-08 00:45:11,163 - INFO -   CVaR-95 (daily)              -1.10%
+2026-03-08 00:45:11,163 - INFO -   Hit Rate                     52.38%
+2026-03-08 00:45:11,163 - INFO -   Avg Daily Turnover           0.0142%
+2026-03-08 00:45:11,163 - INFO -   PSR (SR>0)                   1.0000
+2026-03-08 00:45:11,163 - INFO -   Skewness                     0.465
+2026-03-08 00:45:11,163 - INFO -   Excess Kurtosis              0.574
+2026-03-08 00:45:11,163 - INFO -   Active Trading %             100.0%
+2026-03-08 00:45:11,163 - INFO -   Halted BIL %                 0.0%
+2026-03-08 00:45:11,163 - INFO -   Ramp-in %                    0.0%
+2026-03-08 00:45:11,163 - INFO -   Final NAV                    $118,461.02
+2026-03-08 00:45:11,163 - INFO -   Trading Days                 126
+2026-03-08 00:45:11,164 - INFO -   F2: IS SR=-1.431 | OOS SR=2.787  CAGR=40.33%  MaxDD=-4.85%
+2026-03-08 00:45:11,164 - INFO - Backtest window: 2019-01-02 → 2021-07-01 (630 total days, warmup=21d, recording from 2019-01-02)
+2026-03-08 00:45:12,431 - CRITICAL - HALT triggered 2020-11-10: DD=-20.84%
+2026-03-08 00:45:12,435 - INFO - 2021-02-08: Halt recovery — entering ramp-in.
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:435: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  fx = wrapped_fun(x)
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:439: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  g = append(wrapped_grad(x), 0.0)
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:493: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  a_eq = vstack([con['jac'](x, *con['args'])
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:435: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  fx = wrapped_fun(x)
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:439: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  g = append(wrapped_grad(x), 0.0)
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:493: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  a_eq = vstack([con['jac'](x, *con['args'])
+2026-03-08 00:45:12,579 - INFO - 2021-05-05: Ramp-in complete. Resuming full active trading.
+2026-03-08 00:45:12,692 - INFO - ══ TEARSHEET ══
+2026-03-08 00:45:12,692 - INFO -   CAGR                         -2.52%
+2026-03-08 00:45:12,692 - INFO -   Ann. Volatility              9.65%
+2026-03-08 00:45:12,693 - INFO -   Sharpe Ratio                 -1.051
+2026-03-08 00:45:12,693 - INFO -   Sortino Ratio                -1.350
+2026-03-08 00:45:12,693 - INFO -   Calmar Ratio                 -0.121
+2026-03-08 00:45:12,693 - INFO -   Max Drawdown                 -20.84%
+2026-03-08 00:45:12,693 - INFO -   Max DD Duration              596 days
+2026-03-08 00:45:12,693 - INFO -   VaR-95 (daily)               -1.09%
+2026-03-08 00:45:12,693 - INFO -   CVaR-95 (daily)              -1.52%
+2026-03-08 00:45:12,693 - INFO -   Hit Rate                     34.92%
+2026-03-08 00:45:12,693 - INFO -   Avg Daily Turnover           0.0109%
+2026-03-08 00:45:12,693 - INFO -   PSR (SR>0)                   0.0000
+2026-03-08 00:45:12,693 - INFO -   Skewness                     0.725
+2026-03-08 00:45:12,693 - INFO -   Excess Kurtosis              13.149
+2026-03-08 00:45:12,693 - INFO -   Active Trading %             77.6%
+2026-03-08 00:45:12,693 - INFO -   Halted BIL %                 9.5%
+2026-03-08 00:45:12,693 - INFO -   Ramp-in %                    9.5%
+2026-03-08 00:45:12,693 - INFO -   Final NAV                    $93,826.78
+2026-03-08 00:45:12,693 - INFO -   Trading Days                 630
+2026-03-08 00:45:12,693 - INFO - Backtest window: 2021-06-03 → 2021-12-30 (147 total days, warmup=21d, recording from 2021-07-02)
+2026-03-08 00:45:13,064 - INFO - ══ TEARSHEET ══
+2026-03-08 00:45:13,064 - INFO -   CAGR                         +16.41%
+2026-03-08 00:45:13,064 - INFO -   Ann. Volatility              14.12%
+2026-03-08 00:45:13,064 - INFO -   Sharpe Ratio                 0.734
+2026-03-08 00:45:13,064 - INFO -   Sortino Ratio                1.198
+2026-03-08 00:45:13,064 - INFO -   Calmar Ratio                 3.144
+2026-03-08 00:45:13,064 - INFO -   Max Drawdown                 -5.22%
+2026-03-08 00:45:13,064 - INFO -   Max DD Duration              50 days
+2026-03-08 00:45:13,064 - INFO -   VaR-95 (daily)               -1.37%
+2026-03-08 00:45:13,064 - INFO -   CVaR-95 (daily)              -1.74%
+2026-03-08 00:45:13,064 - INFO -   Hit Rate                     50.79%
+2026-03-08 00:45:13,064 - INFO -   Avg Daily Turnover           0.0105%
+2026-03-08 00:45:13,064 - INFO -   PSR (SR>0)                   1.0000
+2026-03-08 00:45:13,064 - INFO -   Skewness                     0.414
+2026-03-08 00:45:13,064 - INFO -   Excess Kurtosis              1.023
+2026-03-08 00:45:13,064 - INFO -   Active Trading %             100.0%
+2026-03-08 00:45:13,064 - INFO -   Halted BIL %                 0.0%
+2026-03-08 00:45:13,064 - INFO -   Ramp-in %                    0.0%
+2026-03-08 00:45:13,064 - INFO -   Final NAV                    $107,893.77
+2026-03-08 00:45:13,064 - INFO -   Trading Days                 126
+2026-03-08 00:45:13,064 - INFO -   F3: IS SR=-1.051 | OOS SR=0.734  CAGR=16.41%  MaxDD=-5.22%
+2026-03-08 00:45:13,065 - INFO - Backtest window: 2019-01-02 → 2021-12-30 (756 total days, warmup=21d, recording from 2019-01-02)
+2026-03-08 00:45:15,510 - CRITICAL - HALT triggered 2020-11-10: DD=-20.84%
+2026-03-08 00:45:15,513 - INFO - 2021-02-08: Halt recovery — entering ramp-in.
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:435: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  fx = wrapped_fun(x)
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:439: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  g = append(wrapped_grad(x), 0.0)
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:493: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  a_eq = vstack([con['jac'](x, *con['args'])
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:435: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  fx = wrapped_fun(x)
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:439: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  g = append(wrapped_grad(x), 0.0)
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:493: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  a_eq = vstack([con['jac'](x, *con['args'])
+2026-03-08 00:45:15,651 - INFO - 2021-05-05: Ramp-in complete. Resuming full active trading.
+2026-03-08 00:45:16,117 - INFO - ══ TEARSHEET ══
+2026-03-08 00:45:16,117 - INFO -   CAGR                         +0.56%
+2026-03-08 00:45:16,117 - INFO -   Ann. Volatility              10.55%
+2026-03-08 00:45:16,117 - INFO -   Sharpe Ratio                 -0.611
+2026-03-08 00:45:16,117 - INFO -   Sortino Ratio                -0.825
+2026-03-08 00:45:16,117 - INFO -   Calmar Ratio                 0.027
+2026-03-08 00:45:16,117 - INFO -   Max Drawdown                 -20.84%
+2026-03-08 00:45:16,117 - INFO -   Max DD Duration              721 days
+2026-03-08 00:45:16,117 - INFO -   VaR-95 (daily)               -1.14%
+2026-03-08 00:45:16,117 - INFO -   CVaR-95 (daily)              -1.58%
+2026-03-08 00:45:16,117 - INFO -   Hit Rate                     37.70%
+2026-03-08 00:45:16,117 - INFO -   Avg Daily Turnover           0.0108%
+2026-03-08 00:45:16,117 - INFO -   PSR (SR>0)                   0.0000
+2026-03-08 00:45:16,117 - INFO -   Skewness                     0.675
+2026-03-08 00:45:16,117 - INFO -   Excess Kurtosis              8.624
+2026-03-08 00:45:16,117 - INFO -   Active Trading %             81.3%
+2026-03-08 00:45:16,117 - INFO -   Halted BIL %                 7.9%
+2026-03-08 00:45:16,117 - INFO -   Ramp-in %                    7.9%
+2026-03-08 00:45:16,117 - INFO -   Final NAV                    $101,675.21
+2026-03-08 00:45:16,117 - INFO -   Trading Days                 756
+2026-03-08 00:45:16,117 - INFO - Backtest window: 2021-12-01 → 2022-07-01 (147 total days, warmup=21d, recording from 2021-12-31)
+2026-03-08 00:45:16,453 - INFO - ══ TEARSHEET ══
+2026-03-08 00:45:16,454 - INFO -   CAGR                         +12.89%
+2026-03-08 00:45:16,454 - INFO -   Ann. Volatility              13.58%
+2026-03-08 00:45:16,454 - INFO -   Sharpe Ratio                 0.531
+2026-03-08 00:45:16,454 - INFO -   Sortino Ratio                0.972
+2026-03-08 00:45:16,454 - INFO -   Calmar Ratio                 0.827
+2026-03-08 00:45:16,454 - INFO -   Max Drawdown                 -15.59%
+2026-03-08 00:45:16,454 - INFO -   Max DD Duration              82 days
+2026-03-08 00:45:16,454 - INFO -   VaR-95 (daily)               -1.14%
+2026-03-08 00:45:16,454 - INFO -   CVaR-95 (daily)              -1.65%
+2026-03-08 00:45:16,454 - INFO -   Hit Rate                     45.24%
+2026-03-08 00:45:16,454 - INFO -   Avg Daily Turnover           0.0078%
+2026-03-08 00:45:16,454 - INFO -   PSR (SR>0)                   1.0000
+2026-03-08 00:45:16,454 - INFO -   Skewness                     0.292
+2026-03-08 00:45:16,454 - INFO -   Excess Kurtosis              0.117
+2026-03-08 00:45:16,454 - INFO -   Active Trading %             100.0%
+2026-03-08 00:45:16,454 - INFO -   Halted BIL %                 0.0%
+2026-03-08 00:45:16,454 - INFO -   Ramp-in %                    0.0%
+2026-03-08 00:45:16,454 - INFO -   Final NAV                    $106,247.83
+2026-03-08 00:45:16,454 - INFO -   Trading Days                 126
+2026-03-08 00:45:16,454 - INFO -   F4: IS SR=-0.611 | OOS SR=0.531  CAGR=12.89%  MaxDD=-15.59%
+2026-03-08 00:45:16,454 - INFO - Backtest window: 2019-01-02 → 2022-07-01 (882 total days, warmup=21d, recording from 2019-01-02)
+2026-03-08 00:45:17,737 - CRITICAL - HALT triggered 2020-11-10: DD=-20.84%
+2026-03-08 00:45:17,741 - INFO - 2021-02-08: Halt recovery — entering ramp-in.
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:435: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  fx = wrapped_fun(x)
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:439: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  g = append(wrapped_grad(x), 0.0)
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:493: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  a_eq = vstack([con['jac'](x, *con['args'])
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:435: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  fx = wrapped_fun(x)
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:439: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  g = append(wrapped_grad(x), 0.0)
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:493: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  a_eq = vstack([con['jac'](x, *con['args'])
+2026-03-08 00:45:17,882 - INFO - 2021-05-05: Ramp-in complete. Resuming full active trading.
+2026-03-08 00:45:18,707 - INFO - ══ TEARSHEET ══
+2026-03-08 00:45:18,707 - INFO -   CAGR                         +2.32%
+2026-03-08 00:45:18,707 - INFO -   Ann. Volatility              11.04%
+2026-03-08 00:45:18,707 - INFO -   Sharpe Ratio                 -0.388
+2026-03-08 00:45:18,707 - INFO -   Sortino Ratio                -0.550
+2026-03-08 00:45:18,707 - INFO -   Calmar Ratio                 0.111
+2026-03-08 00:45:18,707 - INFO -   Max Drawdown                 -20.84%
+2026-03-08 00:45:18,707 - INFO -   Max DD Duration              721 days
+2026-03-08 00:45:18,707 - INFO -   VaR-95 (daily)               -1.14%
+2026-03-08 00:45:18,707 - INFO -   CVaR-95 (daily)              -1.59%
+2026-03-08 00:45:18,707 - INFO -   Hit Rate                     38.89%
+2026-03-08 00:45:18,707 - INFO -   Avg Daily Turnover           0.0104%
+2026-03-08 00:45:18,707 - INFO -   PSR (SR>0)                   0.0000
+2026-03-08 00:45:18,707 - INFO -   Skewness                     0.597
+2026-03-08 00:45:18,707 - INFO -   Excess Kurtosis              6.323
+2026-03-08 00:45:18,707 - INFO -   Active Trading %             84.0%
+2026-03-08 00:45:18,707 - INFO -   Halted BIL %                 6.8%
+2026-03-08 00:45:18,707 - INFO -   Ramp-in %                    6.8%
+2026-03-08 00:45:18,707 - INFO -   Final NAV                    $108,347.53
+2026-03-08 00:45:18,707 - INFO -   Trading Days                 882
+2026-03-08 00:45:18,707 - INFO - Backtest window: 2022-06-02 → 2022-12-30 (147 total days, warmup=21d, recording from 2022-07-05)
+2026-03-08 00:45:19,014 - INFO - ══ TEARSHEET ══
+2026-03-08 00:45:19,014 - INFO -   CAGR                         -4.62%
+2026-03-08 00:45:19,014 - INFO -   Ann. Volatility              8.84%
+2026-03-08 00:45:19,014 - INFO -   Sharpe Ratio                 -1.150
+2026-03-08 00:45:19,014 - INFO -   Sortino Ratio                -1.723
+2026-03-08 00:45:19,014 - INFO -   Calmar Ratio                 -0.865
+2026-03-08 00:45:19,014 - INFO -   Max Drawdown                 -5.34%
+2026-03-08 00:45:19,014 - INFO -   Max DD Duration              92 days
+2026-03-08 00:45:19,014 - INFO -   VaR-95 (daily)               -0.92%
+2026-03-08 00:45:19,014 - INFO -   CVaR-95 (daily)              -1.31%
+2026-03-08 00:45:19,014 - INFO -   Hit Rate                     46.03%
+2026-03-08 00:45:19,014 - INFO -   Avg Daily Turnover           0.0135%
+2026-03-08 00:45:19,014 - INFO -   PSR (SR>0)                   0.0000
+2026-03-08 00:45:19,014 - INFO -   Skewness                     -0.098
+2026-03-08 00:45:19,014 - INFO -   Excess Kurtosis              0.896
+2026-03-08 00:45:19,014 - INFO -   Active Trading %             100.0%
+2026-03-08 00:45:19,014 - INFO -   Halted BIL %                 0.0%
+2026-03-08 00:45:19,014 - INFO -   Ramp-in %                    0.0%
+2026-03-08 00:45:19,014 - INFO -   Final NAV                    $97,664.67
+2026-03-08 00:45:19,014 - INFO -   Trading Days                 126
+2026-03-08 00:45:19,014 - INFO -   F5: IS SR=-0.388 | OOS SR=-1.150  CAGR=-4.62%  MaxDD=-5.34%
+2026-03-08 00:45:19,015 - INFO - Backtest window: 2019-01-02 → 2022-12-30 (1008 total days, warmup=21d, recording from 2019-01-02)
+2026-03-08 00:45:20,295 - CRITICAL - HALT triggered 2020-11-10: DD=-20.84%
+2026-03-08 00:45:20,299 - INFO - 2021-02-08: Halt recovery — entering ramp-in.
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:435: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  fx = wrapped_fun(x)
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:439: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  g = append(wrapped_grad(x), 0.0)
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:493: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  a_eq = vstack([con['jac'](x, *con['args'])
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:435: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  fx = wrapped_fun(x)
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:439: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  g = append(wrapped_grad(x), 0.0)
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:493: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  a_eq = vstack([con['jac'](x, *con['args'])
+2026-03-08 00:45:20,438 - INFO - 2021-05-05: Ramp-in complete. Resuming full active trading.
+2026-03-08 00:45:21,526 - INFO - ══ TEARSHEET ══
+2026-03-08 00:45:21,526 - INFO -   CAGR                         +1.28%
+2026-03-08 00:45:21,526 - INFO -   Ann. Volatility              10.80%
+2026-03-08 00:45:21,526 - INFO -   Sharpe Ratio                 -0.469
+2026-03-08 00:45:21,526 - INFO -   Sortino Ratio                -0.668
+2026-03-08 00:45:21,526 - INFO -   Calmar Ratio                 0.061
+2026-03-08 00:45:21,526 - INFO -   Max Drawdown                 -20.84%
+2026-03-08 00:45:21,526 - INFO -   Max DD Duration              721 days
+2026-03-08 00:45:21,526 - INFO -   VaR-95 (daily)               -1.14%
+2026-03-08 00:45:21,526 - INFO -   CVaR-95 (daily)              -1.57%
+2026-03-08 00:45:21,526 - INFO -   Hit Rate                     39.78%
+2026-03-08 00:45:21,526 - INFO -   Avg Daily Turnover           0.0108%
+2026-03-08 00:45:21,526 - INFO -   PSR (SR>0)                   0.0000
+2026-03-08 00:45:21,526 - INFO -   Skewness                     0.558
+2026-03-08 00:45:21,526 - INFO -   Excess Kurtosis              6.168
+2026-03-08 00:45:21,526 - INFO -   Active Trading %             86.0%
+2026-03-08 00:45:21,526 - INFO -   Halted BIL %                 6.0%
+2026-03-08 00:45:21,526 - INFO -   Ramp-in %                    6.0%
+2026-03-08 00:45:21,526 - INFO -   Final NAV                    $105,216.14
+2026-03-08 00:45:21,526 - INFO -   Trading Days                 1008
+2026-03-08 00:45:21,527 - INFO - Backtest window: 2022-12-01 → 2023-07-05 (147 total days, warmup=21d, recording from 2023-01-03)
+2026-03-08 00:45:21,907 - INFO - ══ TEARSHEET ══
+2026-03-08 00:45:21,907 - INFO -   CAGR                         +18.62%
+2026-03-08 00:45:21,907 - INFO -   Ann. Volatility              15.68%
+2026-03-08 00:45:21,907 - INFO -   Sharpe Ratio                 0.795
+2026-03-08 00:45:21,907 - INFO -   Sortino Ratio                1.243
+2026-03-08 00:45:21,907 - INFO -   Calmar Ratio                 1.870
+2026-03-08 00:45:21,907 - INFO -   Max Drawdown                 -9.95%
+2026-03-08 00:45:21,907 - INFO -   Max DD Duration              21 days
+2026-03-08 00:45:21,907 - INFO -   VaR-95 (daily)               -1.52%
+2026-03-08 00:45:21,907 - INFO -   CVaR-95 (daily)              -2.09%
+2026-03-08 00:45:21,907 - INFO -   Hit Rate                     50.00%
+2026-03-08 00:45:21,907 - INFO -   Avg Daily Turnover           0.0104%
+2026-03-08 00:45:21,907 - INFO -   PSR (SR>0)                   1.0000
+2026-03-08 00:45:21,907 - INFO -   Skewness                     0.732
+2026-03-08 00:45:21,907 - INFO -   Excess Kurtosis              4.167
+2026-03-08 00:45:21,907 - INFO -   Active Trading %             100.0%
+2026-03-08 00:45:21,907 - INFO -   Halted BIL %                 0.0%
+2026-03-08 00:45:21,907 - INFO -   Ramp-in %                    0.0%
+2026-03-08 00:45:21,907 - INFO -   Final NAV                    $108,912.44
+2026-03-08 00:45:21,907 - INFO -   Trading Days                 126
+2026-03-08 00:45:21,907 - INFO -   F6: IS SR=-0.469 | OOS SR=0.795  CAGR=18.62%  MaxDD=-9.95%
+2026-03-08 00:45:21,908 - INFO - Backtest window: 2019-01-02 → 2023-07-05 (1134 total days, warmup=21d, recording from 2019-01-02)
+2026-03-08 00:45:23,169 - CRITICAL - HALT triggered 2020-11-10: DD=-20.84%
+2026-03-08 00:45:23,173 - INFO - 2021-02-08: Halt recovery — entering ramp-in.
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:435: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  fx = wrapped_fun(x)
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:439: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  g = append(wrapped_grad(x), 0.0)
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:493: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  a_eq = vstack([con['jac'](x, *con['args'])
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:435: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  fx = wrapped_fun(x)
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:439: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  g = append(wrapped_grad(x), 0.0)
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:493: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  a_eq = vstack([con['jac'](x, *con['args'])
+2026-03-08 00:45:23,315 - INFO - 2021-05-05: Ramp-in complete. Resuming full active trading.
+2026-03-08 00:45:24,761 - INFO - ══ TEARSHEET ══
+2026-03-08 00:45:24,762 - INFO -   CAGR                         +2.84%
+2026-03-08 00:45:24,762 - INFO -   Ann. Volatility              11.45%
+2026-03-08 00:45:24,762 - INFO -   Sharpe Ratio                 -0.284
+2026-03-08 00:45:24,762 - INFO -   Sortino Ratio                -0.410
+2026-03-08 00:45:24,762 - INFO -   Calmar Ratio                 0.136
+2026-03-08 00:45:24,762 - INFO -   Max Drawdown                 -20.84%
+2026-03-08 00:45:24,762 - INFO -   Max DD Duration              721 days
+2026-03-08 00:45:24,762 - INFO -   VaR-95 (daily)               -1.19%
+2026-03-08 00:45:24,762 - INFO -   CVaR-95 (daily)              -1.65%
+2026-03-08 00:45:24,762 - INFO -   Hit Rate                     40.92%
+2026-03-08 00:45:24,762 - INFO -   Avg Daily Turnover           0.0107%
+2026-03-08 00:45:24,762 - INFO -   PSR (SR>0)                   0.0000
+2026-03-08 00:45:24,762 - INFO -   Skewness                     0.654
+2026-03-08 00:45:24,762 - INFO -   Excess Kurtosis              6.306
+2026-03-08 00:45:24,762 - INFO -   Active Trading %             87.6%
+2026-03-08 00:45:24,762 - INFO -   Halted BIL %                 5.3%
+2026-03-08 00:45:24,762 - INFO -   Ramp-in %                    5.3%
+2026-03-08 00:45:24,762 - INFO -   Final NAV                    $113,433.59
+2026-03-08 00:45:24,762 - INFO -   Trading Days                 1134
+2026-03-08 00:45:24,762 - INFO - Backtest window: 2023-06-05 → 2024-01-03 (147 total days, warmup=21d, recording from 2023-07-06)
+2026-03-08 00:45:25,084 - INFO - ══ TEARSHEET ══
+2026-03-08 00:45:25,084 - INFO -   CAGR                         +11.51%
+2026-03-08 00:45:25,084 - INFO -   Ann. Volatility              12.35%
+2026-03-08 00:45:25,084 - INFO -   Sharpe Ratio                 0.471
+2026-03-08 00:45:25,084 - INFO -   Sortino Ratio                0.985
+2026-03-08 00:45:25,084 - INFO -   Calmar Ratio                 1.800
+2026-03-08 00:45:25,084 - INFO -   Max Drawdown                 -6.39%
+2026-03-08 00:45:25,084 - INFO -   Max DD Duration              122 days
+2026-03-08 00:45:25,084 - INFO -   VaR-95 (daily)               -0.97%
+2026-03-08 00:45:25,084 - INFO -   CVaR-95 (daily)              -1.16%
+2026-03-08 00:45:25,084 - INFO -   Hit Rate                     52.38%
+2026-03-08 00:45:25,084 - INFO -   Avg Daily Turnover           0.0153%
+2026-03-08 00:45:25,084 - INFO -   PSR (SR>0)                   1.0000
+2026-03-08 00:45:25,084 - INFO -   Skewness                     2.656
+2026-03-08 00:45:25,084 - INFO -   Excess Kurtosis              15.163
+2026-03-08 00:45:25,084 - INFO -   Active Trading %             100.0%
+2026-03-08 00:45:25,084 - INFO -   Halted BIL %                 0.0%
+2026-03-08 00:45:25,084 - INFO -   Ramp-in %                    0.0%
+2026-03-08 00:45:25,084 - INFO -   Final NAV                    $105,596.60
+2026-03-08 00:45:25,084 - INFO -   Trading Days                 126
+2026-03-08 00:45:25,084 - INFO -   F7: IS SR=-0.284 | OOS SR=0.471  CAGR=11.51%  MaxDD=-6.39%
+2026-03-08 00:45:25,085 - INFO - Backtest window: 2019-01-02 → 2024-01-03 (1260 total days, warmup=21d, recording from 2019-01-02)
+2026-03-08 00:45:26,344 - CRITICAL - HALT triggered 2020-11-10: DD=-20.84%
+2026-03-08 00:45:26,348 - INFO - 2021-02-08: Halt recovery — entering ramp-in.
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:435: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  fx = wrapped_fun(x)
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:439: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  g = append(wrapped_grad(x), 0.0)
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:493: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  a_eq = vstack([con['jac'](x, *con['args'])
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:435: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  fx = wrapped_fun(x)
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:439: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  g = append(wrapped_grad(x), 0.0)
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:493: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  a_eq = vstack([con['jac'](x, *con['args'])
+2026-03-08 00:45:26,486 - INFO - 2021-05-05: Ramp-in complete. Resuming full active trading.
+2026-03-08 00:45:28,303 - INFO - ══ TEARSHEET ══
+2026-03-08 00:45:28,303 - INFO -   CAGR                         +3.09%
+2026-03-08 00:45:28,303 - INFO -   Ann. Volatility              11.59%
+2026-03-08 00:45:28,303 - INFO -   Sharpe Ratio                 -0.243
+2026-03-08 00:45:28,303 - INFO -   Sortino Ratio                -0.359
+2026-03-08 00:45:28,303 - INFO -   Calmar Ratio                 0.149
+2026-03-08 00:45:28,303 - INFO -   Max Drawdown                 -20.84%
+2026-03-08 00:45:28,303 - INFO -   Max DD Duration              721 days
+2026-03-08 00:45:28,303 - INFO -   VaR-95 (daily)               -1.16%
+2026-03-08 00:45:28,303 - INFO -   CVaR-95 (daily)              -1.63%
+2026-03-08 00:45:28,303 - INFO -   Hit Rate                     41.98%
+2026-03-08 00:45:28,303 - INFO -   Avg Daily Turnover           0.0112%
+2026-03-08 00:45:28,303 - INFO -   PSR (SR>0)                   0.0000
+2026-03-08 00:45:28,303 - INFO -   Skewness                     0.871
+2026-03-08 00:45:28,303 - INFO -   Excess Kurtosis              7.399
+2026-03-08 00:45:28,303 - INFO -   Active Trading %             88.8%
+2026-03-08 00:45:28,303 - INFO -   Halted BIL %                 4.8%
+2026-03-08 00:45:28,303 - INFO -   Ramp-in %                    4.8%
+2026-03-08 00:45:28,303 - INFO -   Final NAV                    $116,457.82
+2026-03-08 00:45:28,303 - INFO -   Trading Days                 1260
+2026-03-08 00:45:28,303 - INFO - Backtest window: 2023-12-04 → 2024-07-05 (147 total days, warmup=21d, recording from 2024-01-04)
+2026-03-08 00:45:28,607 - INFO - ══ TEARSHEET ══
+2026-03-08 00:45:28,607 - INFO -   CAGR                         +2.96%
+2026-03-08 00:45:28,607 - INFO -   Ann. Volatility              5.96%
+2026-03-08 00:45:28,607 - INFO -   Sharpe Ratio                 -0.459
+2026-03-08 00:45:28,607 - INFO -   Sortino Ratio                -0.786
+2026-03-08 00:45:28,607 - INFO -   Calmar Ratio                 0.926
+2026-03-08 00:45:28,607 - INFO -   Max Drawdown                 -3.20%
+2026-03-08 00:45:28,607 - INFO -   Max DD Duration              94 days
+2026-03-08 00:45:28,607 - INFO -   VaR-95 (daily)               -0.58%
+2026-03-08 00:45:28,607 - INFO -   CVaR-95 (daily)              -0.71%
+2026-03-08 00:45:28,607 - INFO -   Hit Rate                     48.41%
+2026-03-08 00:45:28,607 - INFO -   Avg Daily Turnover           0.0086%
+2026-03-08 00:45:28,607 - INFO -   PSR (SR>0)                   0.0000
+2026-03-08 00:45:28,607 - INFO -   Skewness                     0.044
+2026-03-08 00:45:28,607 - INFO -   Excess Kurtosis              -0.135
+2026-03-08 00:45:28,607 - INFO -   Active Trading %             100.0%
+2026-03-08 00:45:28,607 - INFO -   Halted BIL %                 0.0%
+2026-03-08 00:45:28,607 - INFO -   Ramp-in %                    0.0%
+2026-03-08 00:45:28,607 - INFO -   Final NAV                    $101,469.47
+2026-03-08 00:45:28,607 - INFO -   Trading Days                 126
+2026-03-08 00:45:28,607 - INFO -   F8: IS SR=-0.243 | OOS SR=-0.459  CAGR=2.96%  MaxDD=-3.20%
+2026-03-08 00:45:28,608 - INFO - WF summary: avg IS=-0.705 | avg OOS=0.234 | ⚠️  IS dominated by structural event; OOS signal positive
+2026-03-08 00:45:28,608 - INFO - ✅ Done. Run scripts/visualize_tearsheet.py next.
+[0;32m[OK][0m Stage 3: Event-Driven Standalone Backtest complete.
+
+[0;36m══════════════════════════════════════════[0m
+[0;36m  Stage 4: Tearsheet Visualisation[0m
+[0;36m══════════════════════════════════════════[0m
+2026-03-08 00:45:29,420 - WARNING - Could not load SPY benchmark: No module named 'yfinance'. Skipping benchmark overlay.
+/home/alexr/fortress_v5/scripts/visualize_tearsheet.py:166: FutureWarning: 'M' is deprecated and will be removed in a future version, please use 'ME' instead.
+  monthly = returns.resample("M").apply(lambda r: (1 + r).prod() - 1)
+2026-03-08 00:45:30,878 - INFO - Institutional tear sheet saved to research/outputs/tearsheet.png
+[0;32m[OK][0m Stage 4: Tearsheet Visualisation complete.
+
+[0;32mPipeline complete at Sun Mar  8 00:45:30 CET 2026.[0m
+[INFO] Full log: /home/alexr/fortress_v5/logs/pipeline_20260308_004458.log

@@ -1,6 +1,6 @@
 {
   "mode": "stub",
-  "var_95": -0.006400081823486808,
-  "cvar_95": -0.010974038195519184,
+  "var_95": -0.010982235186704029,
+  "cvar_95": -0.015942750316145355,
   "note": "Run training/train_world_model.py for SDE stress."
 }

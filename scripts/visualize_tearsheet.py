@@ -163,7 +163,7 @@ def generate_tearsheet(
         alpha_daily = float(returns.mean()) - beta * float(spy_aligned.mean())
 
     # Monthly returns for heatmap
-    monthly = returns.resample("M").apply(lambda r: (1 + r).prod() - 1)
+    monthly = returns.resample("ME").apply(lambda r: (1 + r).prod() - 1)
     monthly_pivot = None
     if not monthly.empty:
         mdf = monthly.to_frame("ret")

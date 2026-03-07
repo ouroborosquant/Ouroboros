@@ -7,3 +7,11 @@ cat fortress_brain_sync.txt >> fortress_structure.txt
 mv fortress_structure.txt full_project_sync.txt
 rm fortress_brain_sync.txt
 
+git add .
+git commit -m "INIT: Ouroboros Core Architecture & Trading Engine"
+git push
+
+chmod +x run_backtest.sh
+bash run_backtest.sh
+# or skip the audit gate during dev iteration:
+bash run_backtest.sh --skip-audit

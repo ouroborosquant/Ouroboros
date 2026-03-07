@@ -1,0 +1,14 @@
+[INFO] Fortress v5 — Backtest Pipeline | Sat Mar  7 22:46:37 CET 2026
+[INFO] Log: /home/alexr/fortress_v5/logs/pipeline_20260307_224637.log
+
+[0;36m══════════════════════════════════════════[0m
+[0;36m  Stage 0: Forensic Data Audit[0m
+[0;36m══════════════════════════════════════════[0m
+2026-03-07 22:46:37,978 - INFO - ══════ Fortress v5 — Forensic Look-Ahead Audit ══════
+2026-03-07 22:46:38,024 - WARNING - TimescaleDB unreachable (localhost/fortress): password authentication failed for user "postgres". Falling back to synthetic parquet audit.
+2026-03-07 22:46:38,024 - INFO - Running synthetic parquet integrity audit...
+2026-03-07 22:46:38,053 - INFO -   Loaded market_data.parquet: 37,750 rows, 2019-01-02 → 2024-12-31
+2026-03-07 22:46:38,059 - INFO -   Loaded regime_posteriors.parquet: 1,510 rows, 2019-01-02 → 2024-12-31
+2026-03-07 22:46:38,062 - INFO -   Loaded alpha_signals.parquet: 1,510 rows, 2019-01-02 → 2024-12-31
+2026-03-07 22:46:38,080 - CRITICAL - ❌ VIOLATION: [R2] market_data.parquet: 1510 duplicate date(s) found: [Timestamp('2019-01-02 00:00:00'), Timestamp('2019-01-03 00:00:00'), Timestamp('2019-01-04 00:00:00')]
+2026-03-07 22:46:38,081 - CRITICAL - SYSTEM HALTED: Chronological integrity violations detected in cache. Delete research/outputs/cache/ and re-run precompute scripts.

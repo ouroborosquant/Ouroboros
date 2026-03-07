@@ -1,0 +1,41 @@
+[INFO] Fortress v5 — Backtest Pipeline | Sat Mar  7 22:49:26 CET 2026
+[INFO] Log: /home/alexr/fortress_v5/logs/pipeline_20260307_224926.log
+
+[0;36m══════════════════════════════════════════[0m
+[0;36m  Stage 0: Forensic Data Audit[0m
+[0;36m══════════════════════════════════════════[0m
+2026-03-07 22:49:26,859 - INFO - ══════ Fortress v5 — Forensic Look-Ahead Audit ══════
+2026-03-07 22:49:26,886 - WARNING - TimescaleDB unreachable (localhost/fortress): password authentication failed for user "postgres". Falling back to synthetic parquet audit.
+2026-03-07 22:49:26,887 - INFO - Running synthetic parquet integrity audit...
+2026-03-07 22:49:26,909 - INFO -   Loaded market_data.parquet: 37,750 rows, 2019-01-02 → 2024-12-31
+2026-03-07 22:49:26,913 - INFO -   Loaded regime_posteriors.parquet: 1,510 rows, 2019-01-02 → 2024-12-31
+2026-03-07 22:49:26,916 - INFO -   Loaded alpha_signals.parquet: 1,510 rows, 2019-01-02 → 2024-12-31
+2026-03-07 22:49:26,935 - CRITICAL - ❌ VIOLATION: [R2] market_data.parquet: 1510 duplicate date(s) found: [Timestamp('2019-01-02 00:00:00'), Timestamp('2019-01-03 00:00:00'), Timestamp('2019-01-04 00:00:00')]
+2026-03-07 22:49:26,935 - CRITICAL - SYSTEM HALTED: Chronological integrity violations detected in cache. Delete research/outputs/cache/ and re-run precompute scripts.
+[INFO] Fortress v5 — Backtest Pipeline | Sat Mar  7 22:49:26 CET 2026
+[INFO] Log: /home/alexr/fortress_v5/logs/pipeline_20260307_224926.log
+[WARN] --skip-audit set. Skipping integrity gate. Results may be fiction.
+
+[0;36m══════════════════════════════════════════[0m
+[0;36m  Stage 1: Regime Posterior Precomputation[0m
+[0;36m══════════════════════════════════════════[0m
+2026-03-07 22:49:27,539 - INFO - ══════ Fortress v5 — Regime Posterior Precomputation ══════
+2026-03-07 22:49:27,539 - INFO - Window: 2019-01-02 → 2024-12-31
+2026-03-07 22:49:27,773 - INFO - Trading calendar: 1510 days
+2026-03-07 22:49:27,773 - INFO - Weights not found at models/weights/mamba_kan_latest.pt. Running in Synthetic Mode.
+2026-03-07 22:49:27,773 - INFO - Synthetic Mode active — generating regime-switching GBM market data.
+2026-03-07 22:49:27,773 - INFO - Building cross-asset correlation matrix (5-factor model)...
+2026-03-07 22:49:27,773 - INFO - Sampling Markov regime sequence...
+2026-03-07 22:49:27,784 - INFO - Regime distribution: {'bull_low_vol': 1421, 'bull_high_vol': 66, 'bear': 14, 'crisis': 9}
+2026-03-07 22:49:27,784 - INFO - Simulating 1510 days × 25 assets via Markov-switching GBM...
+2026-03-07 22:49:27,921 - INFO - ✅ Saved prices/returns → research/outputs/cache/prices_wide.parquet, research/outputs/cache/returns_wide.parquet
+2026-03-07 22:49:27,922 - INFO - Building long-format market_data parquet...
+2026-03-07 22:49:29,242 - INFO - ✅ Saved market_data → research/outputs/cache/market_data.parquet (37,750 rows)
+2026-03-07 22:49:29,242 - INFO - Constructing 52-dim obs vectors (rolling causal statistics)...
+2026-03-07 22:49:29,797 - INFO - Computing PCA surrogate regime posteriors (window=63d, dims=16)...
+2026-03-07 22:49:29,980 - INFO -   PCA posterior [200/1510] date=2019-10-17 z_mu[0]=1.962
+2026-03-07 22:49:30,172 - INFO -   PCA posterior [400/1510] date=2020-08-04 z_mu[0]=-1.937
+2026-03-07 22:49:30,364 - INFO -   PCA posterior [600/1510] date=2021-05-20 z_mu[0]=-1.995
+2026-03-07 22:49:30,556 - INFO -   PCA posterior [800/1510] date=2022-03-07 z_mu[0]=1.991
+2026-03-07 22:49:30,751 - INFO -   PCA posterior [1000/1510] date=2022-12-20 z_mu[0]=-0.099
+2026-03-07 22:49:30,942 - INFO -   PCA posterior [1200/1510] date=2023-10-09 z_mu[0]=1.962

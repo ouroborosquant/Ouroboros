@@ -1,0 +1,9 @@
+#commands.txt
+#MOSTRAR CARPETAS, ARCHIVOS Y CODIGO
+find . \( -name "*.py" -o -name "*.yaml" \) -not -path "./fortress_env/*" -not -path "*/__pycache__/*" -exec echo -e "\n\n========================================\nFile: {}\n========================================" \; -exec cat {} \; > fortress_brain_sync.txt
+sudo apt install tree -y
+tree -I 'fortress_env|__pycache__|*.pyc' >> fortress_structure.txt
+cat fortress_brain_sync.txt >> fortress_structure.txt
+mv fortress_structure.txt full_project_sync.txt
+rm fortress_brain_sync.txt
+

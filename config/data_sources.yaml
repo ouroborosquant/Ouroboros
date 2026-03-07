@@ -1,0 +1,15 @@
+# FORTRESS v5 - data_sources.yaml
+universe:
+  - SPY
+  - QQQ
+  - IWM
+  - TLT
+  - GLD
+  - VIXY
+  
+macro_sources:
+  - {id: 'T10Y2Y', lag_days: 0, description: '10-Year minus 2-Year Yield Curve'}
+  - {id: 'NFCI', lag_days: 7, description: 'Chicago Fed National Financial Conditions Index'}
+  - {id: 'CPIAUCSL', lag_days: 14, description: 'Consumer Price Index (Inflation)'}
+  - {id: 'UNRATE', lag_days: 7, description: 'Unemployment Rate'}
+  - {id: 'WALCL', lag_days: 7, description: 'Federal Reserve Total Assets (Liquidity)'}

@@ -1,0 +1,89 @@
+# FORTRESS v5 - hyperparams.yaml
+# Path: config/hyperparams.yaml
+#
+# Global Hyperparameter and Dimensionality Mapping.
+# Defines the exact tensor shapes to ensure all models align in VRAM.
+
+# ── GLOBAL SYSTEM SETTINGS ──────────────────────────────────────────
+system:
+  device: "cuda"
+  log_level: "INFO"
+  max_sequence_length: 252  # 1 Trading Year of context for transformers
+
+# ── 1. REGIME ENCODER (Mamba-KAN VAE) ───────────────────────────────
+mamba_kan:
+  obs_dim: 52
+  d_model: 256          # Renamed from hidden_dim
+  latent_dim: 16
+  n_mamba_layers: 4     # Used by mamba_kan_vae.py
+  kan_width: [256, 128, 64, 16]
+  n_mixture_components: 4
+  learning_rate: 0.0001
+  batch_size: 64
+  epochs: 100
+
+# ── 2. INTRADAY LIQUID NEURAL NET (LTC) ─────────────────────────────
+ltc:
+  input_size: 15          # Intraday micro-features (spread, volume pace, L2 imbalance)
+  n_units: 64             # Number of continuous-time ODE neurons
+  sparsity_level: 0.50    # AutoNCP wiring sparsity
+  urgency_threshold: 0.70 # Triggers emergency execution bypass
+  learning_rate: 0.001
+
+# ── 3. PORTFOLIO ALLOCATOR (EDT) ────────────────────────────────────
+edt:
+  state_dim: 192          # obs_dim (52) + latent_dim (16) + alpha_dim (124)
+  action_dim: 25          # Matches the ETF universe defined in universe.yaml
+  d_model: 512            # Transformer hidden dimension
+  n_heads: 8
+  n_layers: 6
+  diffusion_action_steps: 20
+  learning_rate: 0.0003
+  batch_size: 128
+  epochs: 200
+
+# ── 4. DEEP HEDGING NETWORK ─────────────────────────────────────────
+hedging:
+  latent_dim: 16          # Connects to Mamba-KAN output
+  hedging_hidden_dim: 128
+  cvar_alpha: 0.05        # Optimize for the worst 5% of synthetic trajectories
+
+# ── 5. GRAPH ALPHA ENGINE (GATv2) ───────────────────────────────────
+gat_alpha:
+  node_feat_dim: 78       # Node features
+  edge_feat_dim: 5        # Edge relationship types
+  hidden_dim: 128
+  n_heads: 8
+  n_layers: 3
+  epochs: 100
+
+# ── 6. WORLD MODEL (Neural SDE) ─────────────────────────────────────
+world_model:
+  sde_state_dim: 25       # Simulating returns of the 25-asset universe
+  latent_dim: 16          # Conditioned on Mamba-KAN regime
+  hidden_dim: 128
+  brownian_size: 10       # Number of independent stochastic shocks
+  sde_method: 'euler'
+  batch_size: 64
+  epochs: 150
+
+# ── 7. EXECUTION MARL ECOSYSTEM ─────────────────────────────────────
+meta_controller:
+  meta_input_dim: 20      # 16 (z_t) + 4 (tda, ltc, spread, vol)
+  meta_hidden_dim: 64
+
+stealth_ppo:
+  stealth_state_dim: 12   # L2 Order Book state
+  stealth_action_dim: 2   # [Price Offset, Size Fraction]
+  stealth_hidden_dim: 128
+  detectability_lambda: 0.15
+
+urgent_ddpg:
+  urgent_state_dim: 12
+  urgent_action_dim: 2
+  urgent_hidden_dim: 128
+
+opport_sac:
+  opport_state_dim: 12
+  opport_action_dim: 2
+  opport_hidden_dim: 128

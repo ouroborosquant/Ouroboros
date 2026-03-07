@@ -1,0 +1,55 @@
+# ==========================================
+# FORTRESS v5 - requirements.txt
+# ==========================================
+
+# --- Core Data & Async Infrastructure ---
+pandas>=2.0.0
+numpy>=1.24.0
+pyyaml>=6.0
+asyncpg>=0.28.0
+aiohttp>=3.8.0
+redis>=5.0.0
+aiokafka>=0.8.1
+
+# --- Broker & API Clients ---
+alpaca-py>=0.11.0
+
+# --- Deep Learning Core ---
+# Note: Install torch via the official PyTorch site first to match your CUDA version.
+torch>=2.1.0
+torchvision>=0.16.0
+
+# --- Advanced Architectures (The Brain) ---
+# Mamba (Requires CUDA)
+causal-conv1d>=1.0.0
+mamba-ssm>=1.1.1
+
+# Kolmogorov-Arnold Networks (KAN)
+pykan>=0.0.2
+
+# Liquid Time-Constant Networks (LTC / NCP)
+ncps>=0.0.7
+
+# Neural Stochastic Differential Equations (World Model)
+torchsde>=0.2.6
+
+# Graph Neural Networks (GATv2 Alpha Engine)
+torch_geometric>=2.4.0
+
+# Quantum-Inspired Tensor Networks (DMRG Optimizer)
+quimb>=1.4.0
+scipy>=1.11.0
+
+# --- Alternative Data & Vision (Satellite Pipeline) ---
+opencv-python>=4.8.0
+ultralytics>=8.0.0  # YOLOv8
+
+# --- LLM Agents & Graph-RAG ---
+openai>=1.10.0
+langchain-openai>=0.0.5
+langchain-anthropic>=0.1.0
+chromadb>=0.4.22
+
+tenacity>=8.2.0        # live/alpaca_client.py — @retry decorator
+requests>=2.31.0       # live/alpaca_client.py — retry_if_exception_type(requests.exceptions...)
+matplotlib>=3.7.0      # scripts/visualize_tearsheet.py

@@ -1,0 +1,65 @@
+# FORTRESS v5 - universe.yaml
+# Path: config/universe.yaml
+#
+# Defines the exact 25-asset investable universe.
+# The dimensionality of this file (25) dictates the output dimension 
+# of the GAT alpha vector and the EDT action space.
+#
+# Liquidity Tiers (enforced by config/risk_limits.yaml):
+#   Tier 1: Max position 25% (Broad equity, mega-cap fixed income, primary safe havens)
+#   Tier 2: Max position 15% (Sector equity, emerging markets, standard commodities)
+#   Tier 3: Max position 5%  (Volatility proxies, highly constrained assets)
+
+# ── 1. ASSET UNIVERSE DEFINITION ─────────────────────────────────────
+assets:
+  # Broad US Equity (Tier 1)
+  - {ticker: SPY,  name: 'S&P 500 ETF',          category: equity_broad, tier: 1, min_w: 0.0, max_w: 0.25}
+  - {ticker: QQQ,  name: 'Nasdaq-100 ETF',       category: equity_broad, tier: 1, min_w: 0.0, max_w: 0.25}
+  - {ticker: IWM,  name: 'Russell 2000 ETF',     category: equity_broad, tier: 1, min_w: 0.0, max_w: 0.25}
+  - {ticker: VTV,  name: 'Value ETF',            category: equity_broad, tier: 1, min_w: 0.0, max_w: 0.25}
+
+  # US Sector Equity (Tier 2)
+  - {ticker: XLK,  name: 'Technology Sector',    category: equity_sector, tier: 2, min_w: 0.0, max_w: 0.15}
+  - {ticker: XLF,  name: 'Financial Sector',     category: equity_sector, tier: 2, min_w: 0.0, max_w: 0.15}
+  - {ticker: XLV,  name: 'Healthcare Sector',    category: equity_sector, tier: 2, min_w: 0.0, max_w: 0.15}
+  - {ticker: XLP,  name: 'Consumer Staples',     category: equity_sector, tier: 2, min_w: 0.0, max_w: 0.15}
+  - {ticker: XLI,  name: 'Industrial Sector',    category: equity_sector, tier: 2, min_w: 0.0, max_w: 0.15}
+  - {ticker: XLE,  name: 'Energy Sector',        category: equity_sector, tier: 2, min_w: 0.0, max_w: 0.15}
+
+  # International Equity (Tiers 1 & 2)
+  - {ticker: EFA,  name: 'Developed Markets',    category: equity_intl,   tier: 1, min_w: 0.0, max_w: 0.25}
+  - {ticker: EEM,  name: 'Emerging Markets',     category: equity_intl,   tier: 2, min_w: 0.0, max_w: 0.15}
+
+  # Fixed Income (Tiers 1 & 2)
+  - {ticker: TLT,  name: '20+ Year Treasury',    category: fixed_income,  tier: 1, min_w: 0.0, max_w: 0.25}
+  - {ticker: IEF,  name: '7-10 Year Treasury',   category: fixed_income,  tier: 1, min_w: 0.0, max_w: 0.25}
+  - {ticker: SHY,  name: '1-3 Year Treasury',    category: fixed_income,  tier: 1, min_w: 0.0, max_w: 0.30}
+  - {ticker: LQD,  name: 'Inv Grade Corporate',  category: fixed_income,  tier: 1, min_w: 0.0, max_w: 0.25}
+  - {ticker: HYG,  name: 'High Yield Corporate', category: fixed_income,  tier: 2, min_w: 0.0, max_w: 0.15}
+
+  # Commodities & Real Assets (Tiers 1 & 2)
+  - {ticker: GLD,  name: 'Gold Trust',           category: commodity,     tier: 1, min_w: 0.0, max_w: 0.25}
+  - {ticker: SLV,  name: 'Silver Trust',         category: commodity,     tier: 2, min_w: 0.0, max_w: 0.15}
+  - {ticker: USO,  name: 'US Oil Fund',          category: commodity,     tier: 2, min_w: 0.0, max_w: 0.15}
+  - {ticker: PDBC, name: 'Broad Commodity',      category: commodity,     tier: 2, min_w: 0.0, max_w: 0.15}
+  - {ticker: VNQ,  name: 'Real Estate REIT',     category: real_assets,   tier: 2, min_w: 0.0, max_w: 0.15}
+
+  # Volatility & Extreme Hedges (Tier 3 - Highly Constrained)
+  - {ticker: VIXY, name: 'Short-Term VIX',       category: volatility,    tier: 3, min_w: 0.0, max_w: 0.05}
+
+  # Cash Equivalents / Ultimate Safe Havens (Tier 1 - High Capacity)
+  - {ticker: SHV,  name: 'Short Treasury Bond',  category: fixed_income,  tier: 1, min_w: 0.0, max_w: 0.50}
+  - {ticker: BIL,  name: '1-3 Month T-Bill',     category: fixed_income,  tier: 1, min_w: 0.0, max_w: 0.50}
+
+# ── 2. SYSTEM REFERENCES ─────────────────────────────────────────────
+
+# The benchmark against which beta, relative performance, and alpha are measured
+benchmark: SPY
+
+# Assets the Deep Hedging network and FPGA circuit breaker will default to
+# when `fpga_intraday_loss_halt_pct` or `max_drawdown_halt_pct` are breached.
+safe_havens: 
+  - SHV
+  - BIL
+  - GLD
+  - TLT

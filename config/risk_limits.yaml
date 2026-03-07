@@ -1,0 +1,58 @@
+# FORTRESS v5 - risk_limits.yaml
+# Path: config/risk_limits.yaml
+# 
+# ⚠ CRITICAL ARCHITECTURAL CONSTRAINT ⚠
+# This file is strictly READ-ONLY during live execution. 
+# The Meta-Learning Constitutional Agent is explicitly denied write-access to this file.
+# Modifying FPGA-enforced thresholds requires manual review and bitstream recompilation.
+
+# ── 1. PORTFOLIO-LEVEL HARD LIMITS ───────────────────────────────────
+# Absolute constraints on portfolio exposure and drawdown.
+portfolio_limits:
+  max_gross_leverage: 1.50           # Maximum permitted gross exposure (150%)
+  min_cash_buffer_pct: 0.02          # Always hold at least 2% in SHV/BIL for liquidity
+  
+  # FPGA Hardware Circuit Breaker Limits (MUST MATCH circuit_breaker.cpp)
+  fpga_intraday_loss_halt_pct: 0.05  # -5% intraday drop -> hardware triggers immediate halt
+  fpga_asset_stop_loss_pct: 0.07     # -7% single asset drop -> hardware liquidates asset
+  
+  # Software-Level Drawdown Management
+  max_drawdown_alert_pct: 0.10       # -10% from ATH -> Triggers Telegram CRITICAL alert
+  max_drawdown_halt_pct: 0.15        # -15% from ATH -> Software halts trading, moves to cash
+  rolling_10d_loss_reduce_pct: 0.03  # -3% over 10 days -> Halve all active risk positions
+  rolling_10d_loss_halt_pct: 0.07    # -7% over 10 days -> Liquidate, pause for manual review
+
+# ── 2. POSITION-LEVEL LIMITS ─────────────────────────────────────────
+# Constraints applied by the DMRG Optimizer before generating target weights.
+position_limits:
+  max_single_position_tier1: 0.25    # Max weight for highly liquid assets (e.g., SPY, TLT)
+  max_single_position_tier2: 0.15    # Max weight for sector/commodity assets (e.g., XLK, GLD)
+  max_single_position_tier3: 0.05    # Max weight for illiquid/volatility assets (e.g., VIXY)
+  
+  max_sector_concentration: 0.40     # Sum of correlated ETFs (e.g., XLK + QQQ) cannot exceed 40%
+  min_trade_threshold: 0.01          # Do not execute rebalance if |Δw| < 1% (saves spread costs)
+  max_order_size_adv_pct: 0.05       # Max order size cannot exceed 5% of asset's 20-day ADV
+
+# ── 3. VOLATILITY TARGETING BY REGIME ────────────────────────────────
+# Used by the Elastic Decision Transformer to scale the return target.
+# If realized volatility exceeds these targets, the optimizer dynamically deleverages.
+volatility_targets:
+  low_vol_bull: 0.10                 # Target 10% annualized vol during calm bull markets
+  high_vol_bull: 0.08                # De-risk slightly as volatility expands
+  bear_market: 0.06                  # Protect capital, target 6% vol
+  crisis_cascade: 0.04               # Extreme risk-off, heavy cash/hedge weighting
+
+# ── 4. RESEARCH QUALITY GATES ────────────────────────────────────────
+# Institutional-grade statistical thresholds. 
+# Strategies/Hyperparameters failing these metrics are automatically rejected by research_lab.py.
+research_gates:
+  min_deflated_sharpe: 1.0           # DSR < 1.0 means performance is statistically indistinguishable from luck
+  max_pbo: 0.25                      # Probability of Backtest Overfitting must be under 25%
+  min_out_of_sample_months: 24       # Minimum required OOS validation period
+
+# ── 5. BAYESIAN HEALTH MONITOR THRESHOLDS ────────────────────────────
+# Continuously evaluates live trading vs. backtest expectations.
+health_monitor:
+  min_live_backtest_corr: 0.75       # 6-month rolling Sharpe correlation must stay above 0.75
+  bayesian_yellow_alert_prob: 0.20   # 20% probability alpha has decayed -> reduce sizing by 50%
+  bayesian_red_alert_prob: 0.50      # 50% probability alpha has decayed -> revert to paper trading

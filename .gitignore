@@ -1,0 +1,31 @@
+# Ouroboros .gitignore
+
+# 1. Credentials (CRITICAL)
+.env
+.env.*
+*.pem
+*.key
+
+# 2. Virtual Environments
+fortress_env/
+venv/
+__pycache__/
+*.pyc
+
+# 3. Data & Databases
+data/**/*.csv
+data/**/*.parquet
+data/**/*.db
+timescaledb_data/
+redis_data/
+kafka_data/
+
+# 4. Neural Network Weights
+*.pt
+*.pth
+models/weights/
+
+# 5. OS & IDE
+.vscode/
+.DS_Store
+

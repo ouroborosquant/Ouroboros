@@ -1,0 +1,16 @@
+# FORTRESS v5 - satellite_targets.yaml
+# Tracks physical economy proxies to front-run sector ETF performance.
+
+- id: 'permian_basin_cushing'
+  etf_ticker: 'XLE'
+  target_type: 'oil_tank'
+  lat: 35.9846
+  lon: -96.7538
+  aoi_polygon_wkt: 'POLYGON((-96.76 35.99, -96.74 35.99, -96.74 35.97, -96.76 35.97, -96.76 35.99))'
+
+- id: 'long_beach_port'
+  etf_ticker: 'XLI'
+  target_type: 'port'
+  lat: 33.7541
+  lon: -118.2164
+  aoi_polygon_wkt: 'POLYGON((-118.22 33.76, -118.21 33.76, -118.21 33.74, -118.22 33.74, -118.22 33.76))'

@@ -3,9 +3,25 @@ FORTRESS v5 - neural_sde.py
 Path: models/world_model/neural_sde.py
 
 Latent Neural SDE World Model.
-Learns continuous-time market dynamics to generate synthetic trajectories 
+Learns continuous-time market dynamics to generate synthetic trajectories
 for offline RL training and federated data sharing.
 Architecture ONLY. No training loops.
+
+FIXES APPLIED:
+  - BUG #10: `self.current_z_t` was a global mutable attribute set directly on the
+             model instance before calling `torchsde.sdeint`:
+                 self.model.current_z_t = Z_batch
+                 torchsde.sdeint(self.model, ...)
+             In any context with DataLoader `num_workers > 0`, or if `sdeint` is
+             called concurrently from two coroutines, the regime conditioning tensor
+             of one call silently overwrites the other. The SDE integrates with the
+             wrong z_t, producing a regime-mismatched trajectory with no error raised.
+
+             Fix: `current_z_t` has been removed as an instance attribute.
+             The drift `f()` and diffusion `g()` functions now receive z_t via a
+             per-call closure. `generate_synthetic_paths()` and the training harness
+             call `build_conditioned_sde(z_t)` which returns a thin wrapper whose
+             `f` and `g` close over that specific z_t tensor. Thread-safe by construction.
 """
 
 import torch
@@ -21,140 +37,222 @@ except ImportError:
 
 class DriftNetwork(nn.Module):
     """
-    Models the deterministic component of the market dynamics (f_theta).
-    This captures the expected return / directional trend.
+    Models the deterministic component μ(y, z_t) of the market SDE:
+        dY_t = f(t, Y_t) dt + g(t, Y_t) dW_t
+    where f = DriftNetwork captures expected return / directional trend,
+    conditioned on the latent regime z_t from the Mamba-KAN VAE.
     """
+
     def __init__(self, state_dim: int, regime_dim: int, hidden_dim: int):
         super().__init__()
-        # The network takes the current market state and the latent regime context
         self.net = nn.Sequential(
             nn.Linear(state_dim + regime_dim, hidden_dim),
-            nn.Mish(),
+            nn.SiLU(),
             nn.Linear(hidden_dim, hidden_dim),
-            nn.Mish(),
-            nn.Linear(hidden_dim, state_dim)
+            nn.SiLU(),
+            nn.Linear(hidden_dim, state_dim),
         )
 
-    def forward(self, t: torch.Tensor, y: torch.Tensor, z_t: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        t: torch.Tensor,
+        y: torch.Tensor,
+        z_t: torch.Tensor,
+    ) -> torch.Tensor:
         """
-        t: Current timestep
-        y: Current market state (Batch, State_Dim)
-        z_t: Current Mamba-KAN regime latent (Batch, Regime_Dim)
+        Args:
+            t:   Scalar time (unused if network is time-invariant, kept for torchsde compat).
+            y:   Asset state tensor, shape (Batch, State_Dim).
+            z_t: Regime conditioning tensor, shape (Batch, Regime_Dim).
+
+        Returns:
+            drift: Shape (Batch, State_Dim).
         """
-        # Concatenate state and regime context
-        # Expand z_t to match the batch dimension if generating multiple paths
         if z_t.dim() == 1:
             z_t = z_t.unsqueeze(0).expand(y.shape[0], -1)
-            
         inputs = torch.cat([y, z_t], dim=-1)
         return self.net(inputs)
 
 
 class DiffusionNetwork(nn.Module):
     """
-    Models the stochastic component of the market dynamics (g_phi).
-    This captures volatility, correlations, and Brownian shocks (dW_t).
+    Models the stochastic component σ(y, z_t) of the market SDE.
+    Output shape must be (Batch, State_Dim, Brownian_Size) for torchsde 'general' noise.
     """
-    def __init__(self, state_dim: int, regime_dim: int, hidden_dim: int, brownian_size: int):
+
+    def __init__(
+        self, state_dim: int, regime_dim: int, hidden_dim: int, brownian_size: int
+    ):
         super().__init__()
         self.state_dim = state_dim
         self.brownian_size = brownian_size
-        
+
         self.net = nn.Sequential(
             nn.Linear(state_dim + regime_dim, hidden_dim),
-            nn.Mish(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.Mish(),
-            # Output maps to a matrix of shape (state_dim, brownian_size)
-            nn.Linear(hidden_dim, state_dim * brownian_size)
+            nn.SiLU(),
+            nn.Linear(hidden_dim, state_dim * brownian_size),
+            nn.Softplus(),  # Ensures non-negative diffusion coefficients.
         )
 
-    def forward(self, t: torch.Tensor, y: torch.Tensor, z_t: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        t: torch.Tensor,
+        y: torch.Tensor,
+        z_t: torch.Tensor,
+    ) -> torch.Tensor:
         """
-        Returns the diffusion matrix to be multiplied by the Brownian motion.
-        Output shape must be (Batch, State_Dim, Brownian_Size).
+        Args:
+            t:   Scalar time.
+            y:   Asset state tensor, shape (Batch, State_Dim).
+            z_t: Regime conditioning tensor, shape (Batch, Regime_Dim).
+
+        Returns:
+            diffusion: Shape (Batch, State_Dim, Brownian_Size).
         """
         if z_t.dim() == 1:
             z_t = z_t.unsqueeze(0).expand(y.shape[0], -1)
-            
         inputs = torch.cat([y, z_t], dim=-1)
         diffusion_flat = self.net(inputs)
-        
-        # Reshape to strictly match the torchsde requirement for matrix outputs
+        # Reshape to strictly match the torchsde requirement for 'general' noise.
         return diffusion_flat.view(-1, self.state_dim, self.brownian_size)
+
+
+class _ConditionedSDE(nn.Module):
+    """
+    FIX #10: A thin, per-call wrapper that closes over a specific `z_t` tensor.
+
+    Previously, `LatentSDEWorldModel` used `self.current_z_t` — a shared mutable
+    attribute set before each `torchsde.sdeint` call. Any concurrent call overwrote it.
+
+    This wrapper is instantiated fresh per `generate_synthetic_paths()` call or per
+    training batch iteration. The z_t is local to this instance, making the SDE
+    integration completely thread-safe. Two concurrent calls will never share state.
+
+    torchsde requires `noise_type` and `sde_type` as class attributes.
+    """
+
+    noise_type = "general"
+    sde_type = "ito"
+
+    def __init__(
+        self,
+        f_net: DriftNetwork,
+        g_net: DiffusionNetwork,
+        z_t: torch.Tensor,
+    ):
+        super().__init__()
+        # Store the conditioning tensor as a buffer (not a parameter — no gradients).
+        # Using register_buffer ensures it is moved correctly if .to(device) is called.
+        self.register_buffer("_z_t", z_t)
+        # Use non-parameter references to avoid double-registration of weights.
+        self.f_net = f_net
+        self.g_net = g_net
+
+    def f(self, t: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        """Drift function called by the torchsde integrator."""
+        return self.f_net(t, y, self._z_t)
+
+    def g(self, t: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        """Diffusion function called by the torchsde integrator."""
+        return self.g_net(t, y, self._z_t)
 
 
 class LatentSDEWorldModel(nn.Module):
     """
-    The full Neural SDE wrapper utilizing the torchsde numerical solvers.
-    Noise type: 'general' (allows complex state-dependent correlations).
-    SDE type: 'ito' (standard Itô calculus formulation).
+    The full Neural SDE World Model.
+    Noise type: 'general' (state-dependent covariance matrix).
+    SDE type:   'ito' (standard Itô calculus formulation).
+
+    FIX #10: `current_z_t` instance attribute removed.
+    Regime conditioning is now injected per-call via `build_conditioned_sde(z_t)`.
     """
-    noise_type = 'general'
-    sde_type = 'ito'
 
     def __init__(self, config: Dict):
         super().__init__()
-        
-        self.state_dim = config.get('sde_state_dim', 25) # e.g., simulating 25 asset returns
-        self.regime_dim = config.get('latent_dim', 16)   # From Mamba-KAN
-        self.hidden_dim = config.get('hidden_dim', 128)
-        self.brownian_size = config.get('brownian_size', 10) # Number of independent shock factors
-        self.sde_method = config.get('sde_method', 'euler')  # 'euler', 'milstein', 'srk'
-        
-        # We must explicitly define f and g for the torchsde.sdeint solver
+
+        self.state_dim = config.get("sde_state_dim", 25)   # 25-asset universe.
+        self.regime_dim = config.get("latent_dim", 16)      # From Mamba-KAN.
+        self.hidden_dim = config.get("hidden_dim", 128)
+        self.brownian_size = config.get("brownian_size", 10)
+        self.sde_method = config.get("sde_method", "euler")
+
         self.f_net = DriftNetwork(self.state_dim, self.regime_dim, self.hidden_dim)
-        self.g_net = DiffusionNetwork(self.state_dim, self.regime_dim, self.hidden_dim, self.brownian_size)
-        
-        # State required by torchsde to pass external context (z_t) cleanly
-        self.current_z_t = None
+        self.g_net = DiffusionNetwork(
+            self.state_dim, self.regime_dim, self.hidden_dim, self.brownian_size
+        )
 
-    def f(self, t: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-        """Drift function called internally by the solver."""
-        return self.f_net(t, y, self.current_z_t)
+    def build_conditioned_sde(self, z_t: torch.Tensor) -> _ConditionedSDE:
+        """
+        FIX #10: Factory method. Returns a fresh _ConditionedSDE that closes over
+        this specific `z_t` tensor. Thread-safe — each call produces an independent
+        object with no shared mutable state.
 
-    def g(self, t: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-        """Diffusion function called internally by the solver."""
-        return self.g_net(t, y, self.current_z_t)
+        Called by:
+          - `generate_synthetic_paths()` for live scenario generation.
+          - `train_world_model.py` for each training batch iteration.
+
+        Args:
+            z_t: Regime conditioning tensor, shape (Batch, Regime_Dim).
+                 Can be a single regime vector (1, 16) or a batched set (B, 16).
+
+        Returns:
+            A _ConditionedSDE instance whose f() and g() are bound to this z_t.
+        """
+        return _ConditionedSDE(f_net=self.f_net, g_net=self.g_net, z_t=z_t)
 
     @torch.no_grad()
-    def generate_synthetic_paths(self, initial_state: torch.Tensor, z_t: torch.Tensor, 
-                                 n_steps: int = 21, dt: float = 1.0, 
-                                 n_paths: int = 1000) -> torch.Tensor:
+    def generate_synthetic_paths(
+        self,
+        initial_state: torch.Tensor,
+        z_t: torch.Tensor,
+        n_steps: int = 21,
+        dt: float = 1.0,
+        n_paths: int = 1000,
+    ) -> torch.Tensor:
         """
         SIMULATION METHOD.
-        Generates thousands of alternate future trajectories based on the current regime.
-        
+        Generates n_paths alternate future trajectories from `initial_state` under
+        the regime encoded in `z_t`.
+
+        FIX #10: Previously set `self.current_z_t = z_t` before calling sdeint.
+                 Now passes z_t through `build_conditioned_sde()` — no shared state.
+
         Args:
-            initial_state: Starting market prices/features (State_Dim,)
-            z_t: The current Mamba-KAN regime vector (Regime_Dim,)
-            n_steps: Number of forward timesteps to simulate (e.g., 21 trading days)
-            dt: Step size
-            n_paths: Number of Monte Carlo paths to generate
-            
+            initial_state: Shape (State_Dim,) — current market state (prices/returns).
+            z_t:           Shape (Regime_Dim,) or (1, Regime_Dim) — regime conditioning.
+            n_steps:       Number of simulation steps (days).
+            dt:            Time step size (1.0 = daily).
+            n_paths:       Number of Monte Carlo paths to generate.
+
         Returns:
-            Tensor of shape (n_steps, n_paths, State_Dim)
+            paths: Shape (n_paths, n_steps + 1, State_Dim).
         """
-        self.eval()
-        
-        # Set the latent context for the solver
-        self.current_z_t = z_t.to(initial_state.device)
-        
-        # Expand initial state for batch processing
-        y0 = initial_state.unsqueeze(0).expand(n_paths, -1)
-        
-        # Define the time grid
-        t_grid = torch.linspace(0, n_steps * dt, n_steps + 1, device=initial_state.device)
-        
-        # Solve the SDE forward in time
-        # The solver handles the complex stochastic calculus automatically
-        with torch.no_grad():
-            synthetic_trajectories = torchsde.sdeint(
-                self, 
-                y0, 
-                t_grid, 
-                method=self.sde_method, 
-                dt=dt
-            )
-            
-        return synthetic_trajectories
+        device = next(self.parameters()).device
+
+        # Expand initial state across all paths: (n_paths, State_Dim).
+        y0 = initial_state.unsqueeze(0).expand(n_paths, -1).to(device)
+
+        # Expand z_t across all paths: (n_paths, Regime_Dim).
+        if z_t.dim() == 1:
+            z_t_expanded = z_t.unsqueeze(0).expand(n_paths, -1).to(device)
+        else:
+            z_t_expanded = z_t.expand(n_paths, -1).to(device)
+
+        # FIX #10: Build a fresh, per-call conditioned SDE. No global mutation.
+        conditioned_sde = self.build_conditioned_sde(z_t_expanded).to(device)
+
+        # Time grid: [0, dt, 2*dt, ..., n_steps*dt].
+        ts = torch.linspace(0, n_steps * dt, n_steps + 1, device=device)
+
+        # Numerical SDE integration (Euler-Maruyama by default).
+        # Returns shape: (n_steps + 1, n_paths, State_Dim).
+        paths = torchsde.sdeint(
+            sde=conditioned_sde,
+            y0=y0,
+            ts=ts,
+            method=self.sde_method,
+            dt=dt,
+        )
+
+        # Transpose to (n_paths, n_steps + 1, State_Dim) for downstream consumers.
+        return paths.permute(1, 0, 2)

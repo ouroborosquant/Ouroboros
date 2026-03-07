@@ -1922,7 +1922,7 @@ from typing import Dict, List, Any, Tuple
 # External AI Dependencies
 try:
     from langchain_anthropic import ChatAnthropic
-    from langchain_openai import AsyncOpenAI
+    from openai import AsyncOpenAI
     import chromadb
 except ImportError:
     raise ImportError("Requires langchain_anthropic, openai, and chromadb.")
@@ -4657,6 +4657,15 @@ class EventDrivenBacktester:
     def _calculate_orders(self, target_weights: np.ndarray, prices: Dict[str, float]) -> Dict[str, float]:
         # Scaffold: Translates target weights into asset quantities
         return {'SPY': 10, 'TLT': 50}
+    
+if __name__ == "__main__":
+    import asyncio
+    from data.pipeline import DataPipeline
+    pipeline = DataPipeline()
+    config = {'initial_capital': 100000.0, 'base_slippage_bps': 2.0}
+    backtester = EventDrivenBacktester(pipeline, config)
+    strategy_models = {}  # Will fail gracefully until models are wired in
+    asyncio.run(backtester.run_backtest(strategy_models, '2023-01-01', '2024-01-01'))
 
 ========================================
 File: ./research/causal_inference.py

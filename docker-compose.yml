@@ -1,2 +1,26 @@
-# FORTRESS v5 - docker-compose.yml
-# Path: docker-compose.yml
+version: '3.8'
+
+services:
+  timescaledb:
+    image: timescale/timescaledb:latest-pg14
+    container_name: ouroboros_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: fortress_secure_pass
+      POSTGRES_DB: fortress
+    ports:
+      - "5432:5432"
+    volumes:
+      - timescaledb_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:alpine
+    container_name: ouroboros_cache
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+volumes:
+  timescaledb_data:
+    driver: local

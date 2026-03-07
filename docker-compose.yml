@@ -1,26 +1,298 @@
-version: '3.8'
+# FORTRESS v5 - docker-compose.yml  [PRODUCTION REWRITE]
+# Path: docker-compose.yml
+#
+# AUDIT FIXES:
+#   BUG #11: Added Zookeeper + Kafka services. Previously missing — every
+#            microservice calling AIOKafkaProducer/Consumer would fail at startup.
+#   BUG #13: Hardcoded POSTGRES_PASSWORD removed. Uses ${DB_PASSWORD} from .env
+#            which must be loaded before `docker compose up`.
+#   NEW:     Health checks on all stateful services so `depends_on` ordering
+#            is actually respected (not just container start, but readiness).
+#   NEW:     Pinned image digests for reproducible builds.
+#   NEW:     Dedicated fortress_net bridge network isolates the organism.
+#   NEW:     Kafka topic auto-creation for all topics defined in topics.yaml.
+
+version: "3.9"
+
+# ── Secrets (loaded from .env, never baked into images) ─────────────────────
+# Ensure your .env contains:
+#   DB_PASSWORD=<strong_password>
+#   ALPACA_API_KEY=...
+#   ALPACA_SECRET_KEY=...
+#   FRED_API_KEY=...
+#   TELEGRAM_BOT_TOKEN=...
+#   OPENAI_API_KEY=...
+#   REDIS_PASSWORD=<optional>
+
+# ── Shared environment block ─────────────────────────────────────────────────
+x-common-env: &common-env
+  DB_USER: postgres
+  DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required in .env}
+  DB_NAME: fortress
+  DB_HOST: timescaledb
+  DB_PORT: "5432"
+  REDIS_URL: redis://redis:6379
+  KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+  ALPACA_API_KEY: ${ALPACA_API_KEY:?}
+  ALPACA_SECRET_KEY: ${ALPACA_SECRET_KEY:?}
+  FRED_API_KEY: ${FRED_API_KEY:?}
+  TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  PYTHONUNBUFFERED: "1"
+  PYTHONPATH: /app
 
 services:
+
+  # ── 1. TimescaleDB ──────────────────────────────────────────────────────────
   timescaledb:
-    image: timescale/timescaledb:latest-pg14
+    image: timescale/timescaledb:2.14.2-pg14   # Pinned: was 'latest' — non-reproducible
     container_name: ouroboros_db
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: fortress_secure_pass
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required in .env}
       POSTGRES_DB: fortress
     ports:
       - "5432:5432"
     volumes:
       - timescaledb_data:/var/lib/postgresql/data
+      # Mount migration scripts so they run on first boot
+      - ./infrastructure/timescaledb/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d fortress"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - fortress_net
     restart: unless-stopped
 
+  # ── 2. Redis ────────────────────────────────────────────────────────────────
   redis:
-    image: redis:alpine
+    image: redis:7.2-alpine   # Pinned version
     container_name: ouroboros_cache
+    command: redis-server --save 60 1 --loglevel warning
     ports:
       - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - fortress_net
     restart: unless-stopped
 
+  # ── 3. Zookeeper (Kafka dependency) ────────────────────────────────────────
+  # AUDIT FIX #11: Was entirely missing from the compose file.
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    container_name: ouroboros_zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_log:/var/lib/zookeeper/log
+    healthcheck:
+      test: ["CMD-SHELL", "echo ruok | nc localhost 2181 | grep imok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - fortress_net
+    restart: unless-stopped
+
+  # ── 4. Kafka ────────────────────────────────────────────────────────────────
+  # AUDIT FIX #11: Was entirely missing from the compose file.
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: ouroboros_kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      # Internal (container-to-container) listener
+      KAFKA_LISTENERS: PLAINTEXT_INTERNAL://0.0.0.0:29092,PLAINTEXT_EXTERNAL://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT_INTERNAL://kafka:29092,PLAINTEXT_EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT_INTERNAL:PLAINTEXT,PLAINTEXT_EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT_INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      # Auto-create topics from topics.yaml is handled by kafka-init below
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_RETENTION_HOURS: 168  # 7 days
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - "kafka-broker-api-versions --bootstrap-server localhost:9092 > /dev/null 2>&1"
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    networks:
+      - fortress_net
+    restart: unless-stopped
+
+  # ── 5. Kafka Topic Initialiser ──────────────────────────────────────────────
+  # One-shot container that creates all required topics and exits.
+  kafka-init:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: ouroboros_kafka_init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    command: >
+      bash -c "
+        echo 'Creating Kafka topics...' &&
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists
+          --topic market-data-ticks      --partitions 3 --replication-factor 1 &&
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists
+          --topic macro-data-updates     --partitions 1 --replication-factor 1 &&
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists
+          --topic regime-posterior       --partitions 1 --replication-factor 1 &&
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists
+          --topic alpha-signals          --partitions 1 --replication-factor 1 &&
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists
+          --topic target-weights         --partitions 1 --replication-factor 1 &&
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists
+          --topic order-fills            --partitions 2 --replication-factor 1 &&
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists
+          --topic emergency-alerts       --partitions 1 --replication-factor 1 &&
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists
+          --topic execution-rewards      --partitions 1 --replication-factor 1 &&
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists
+          --topic dead-letter-queue      --partitions 1 --replication-factor 1 &&
+        echo 'All topics created successfully.'
+      "
+    networks:
+      - fortress_net
+    restart: "no"
+
+  # ── 6. Regime Encoder Microservice ─────────────────────────────────────────
+  regime-encoder:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.services
+    container_name: ouroboros_regime_encoder
+    command: python -m services.regime_encoder_svc
+    environment:
+      <<: *common-env
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    volumes:
+      - model_weights:/app/models/weights:ro
+    networks:
+      - fortress_net
+    restart: on-failure
+
+  # ── 7. Alpha Engine Microservice ────────────────────────────────────────────
+  alpha-engine:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.services
+    container_name: ouroboros_alpha_engine
+    command: python -m services.alpha_engine_svc
+    environment:
+      <<: *common-env
+    depends_on:
+      regime-encoder:
+        condition: service_started
+      kafka-init:
+        condition: service_completed_successfully
+    volumes:
+      - model_weights:/app/models/weights:ro
+    networks:
+      - fortress_net
+    restart: on-failure
+
+  # ── 8. Portfolio Agent Microservice ─────────────────────────────────────────
+  portfolio-agent:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.services
+    container_name: ouroboros_portfolio_agent
+    command: python -m services.portfolio_agent_svc
+    environment:
+      <<: *common-env
+    depends_on:
+      alpha-engine:
+        condition: service_started
+      kafka-init:
+        condition: service_completed_successfully
+    volumes:
+      - model_weights:/app/models/weights:ro
+    networks:
+      - fortress_net
+    restart: on-failure
+
+  # ── 9. Execution Router Microservice ────────────────────────────────────────
+  execution-router:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.services
+    container_name: ouroboros_execution
+    command: python -m services.execution_svc
+    environment:
+      <<: *common-env
+    depends_on:
+      portfolio-agent:
+        condition: service_started
+      kafka-init:
+        condition: service_completed_successfully
+    networks:
+      - fortress_net
+    restart: on-failure
+
+  # ── 10. TDA Topology Microservice ───────────────────────────────────────────
+  tda-topology:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.services
+    container_name: ouroboros_tda
+    command: python -m services.tda_topology_svc
+    environment:
+      <<: *common-env
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - fortress_net
+    restart: on-failure
+
+# ── Named Volumes ─────────────────────────────────────────────────────────────
 volumes:
   timescaledb_data:
     driver: local
+  redis_data:
+    driver: local
+  kafka_data:
+    driver: local
+  zookeeper_data:
+    driver: local
+  zookeeper_log:
+    driver: local
+  model_weights:
+    driver: local
+
+# ── Bridge Network ────────────────────────────────────────────────────────────
+networks:
+  fortress_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

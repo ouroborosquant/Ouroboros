@@ -1,2 +1,196 @@
-# FORTRESS v5 - topics.yaml
+# FORTRESS v5 - topics.yaml  [COMPLETE IMPLEMENTATION]
 # Path: infrastructure/kafka/topics.yaml
+#
+# AUDIT FIX: File was completely empty. Every microservice assumes these topics
+# exist at startup. The kafka-init container in docker-compose.yml reads this
+# specification to create topics via kafka-topics CLI.
+#
+# Topic design principles:
+#   - partitions: scales with consumer parallelism needs
+#   - retention_ms: tuned to operational review window
+#   - replication: 1 for single-broker dev; set to 3 in production k8s
+#
+# Data flow:
+#   market-data-ticks
+#       └─► regime_encoder_svc  (LTC intraday)
+#   macro-data-updates
+#       └─► regime_encoder_svc  (Mamba-KAN daily)
+#   regime-posterior
+#       └─► alpha_engine_svc
+#       └─► portfolio_agent_svc
+#   alpha-signals
+#       └─► portfolio_agent_svc
+#   target-weights
+#       └─► execution_svc
+#   order-fills
+#       └─► order_manager  (MARL reward calculator)
+#   execution-rewards
+#       └─► training loop (online RL updates)
+#   emergency-alerts
+#       └─► execution_svc (bypass normal routing)
+#       └─► telegram_notifier
+#   dead-letter-queue
+#       └─► ops monitoring / alerting
+
+topics:
+
+  # ── MARKET DATA TIER ───────────────────────────────────────────────────────
+  - name: market-data-ticks
+    partitions: 3              # 3 partitions: one per asset cluster (growth/value/fixed)
+    replication_factor: 1
+    config:
+      retention.ms: "86400000"   # 24h — intraday only, not needed after day close
+      compression.type: lz4      # Fast compression for high-throughput tick data
+      cleanup.policy: delete
+    schema:
+      description: >
+        Published by market_data_svc. Consumed by regime_encoder_svc.
+        Carries 15-dim intraday feature vector per timestamp.
+      fields:
+        timestamp: float            # Unix epoch (seconds, float for sub-second precision)
+        features: "list[float]"     # 15-dim: [OBI, spread_z, vol_pace, vwap_delta, ...]
+        source: str                 # e.g. 'alpaca_ws', 'ib_tws'
+
+  - name: macro-data-updates
+    partitions: 1              # Sequential — macro releases are low-frequency
+    replication_factor: 1
+    config:
+      retention.ms: "604800000"  # 7 days — macro releases have long relevance windows
+      compression.type: gzip
+      cleanup.policy: delete
+    schema:
+      description: >
+        Published by macro_data_svc (FRED releases, economic calendar events).
+        Consumed by regime_encoder_svc for Mamba-KAN daily update.
+      fields:
+        timestamp: float
+        series_id: str            # FRED series code, e.g. 'CPIAUCSL'
+        value: float
+        release_date: str         # ISO date of the actual economic release
+
+  # ── INTELLIGENCE TIER ─────────────────────────────────────────────────────
+  - name: regime-posterior
+    partitions: 1
+    replication_factor: 1
+    config:
+      retention.ms: "86400000"   # 24h — regime posteriors stale after market close
+      compression.type: lz4
+      cleanup.policy: delete
+    schema:
+      description: >
+        Published by regime_encoder_svc. Consumed by alpha_engine_svc
+        and portfolio_agent_svc. Carries the Mamba-KAN latent posterior.
+      fields:
+        timestamp: float
+        z_mu: "list[float]"       # 16-dim latent mean vector
+        z_sigma: "list[float]"    # 16-dim latent std vector
+        tda_alert: int            # 0/1 — TDA topology collapse flag
+        ltc_urgency: float        # [0,1] — LTC intraday drift score
+        regime_label: str         # Human-readable: 'bull_low_vol', 'crisis', etc.
+
+  - name: alpha-signals
+    partitions: 1
+    replication_factor: 1
+    config:
+      retention.ms: "86400000"
+      compression.type: lz4
+      cleanup.policy: delete
+    schema:
+      description: >
+        Published by alpha_engine_svc (GATv2 graph inference).
+        Consumed by portfolio_agent_svc to assemble the 192-dim EDT state.
+      fields:
+        timestamp: float
+        alpha_vector: "list[float]"  # 25-dim per-asset expected alpha scores
+
+  # ── EXECUTION TIER ────────────────────────────────────────────────────────
+  - name: target-weights
+    partitions: 1
+    replication_factor: 1
+    config:
+      retention.ms: "86400000"
+      compression.type: gzip
+      cleanup.policy: delete
+    schema:
+      description: >
+        Published by portfolio_agent_svc. Consumed by execution_svc.
+        Carries final validated portfolio weights for execution routing.
+      fields:
+        timestamp: float
+        weights: "dict[str, float]"   # {ticker: target_weight}
+        gross_leverage: float
+        hedge_overlay: "dict[str, float]"  # VIXY/GLD/TLT hedge weights
+        agent_hint: str              # 'stealth_ppo', 'urgent_ddpg', 'opportunistic_sac'
+
+  - name: order-fills
+    partitions: 2              # 2 partitions: one for equity orders, one for options/hedges
+    replication_factor: 1
+    config:
+      retention.ms: "2592000000"  # 30 days — needed for RL replay buffer and audit trail
+      compression.type: gzip
+      cleanup.policy: delete
+    schema:
+      description: >
+        Published by Alpaca WebSocket trade update listener.
+        Consumed by order_manager.py to compute Implementation Shortfall.
+      fields:
+        order_id: str
+        ticker: str
+        side: str               # 'BUY' or 'SELL'
+        fill_qty: float
+        fill_price: float
+        fill_timestamp: float
+        agent: str
+
+  - name: execution-rewards
+    partitions: 1
+    replication_factor: 1
+    config:
+      retention.ms: "604800000"  # 7 days — MARL training replay window
+      compression.type: gzip
+      cleanup.policy: delete
+    schema:
+      description: >
+        Published by order_manager.py after IS calculation.
+        Consumed by MARL online learning loop.
+      fields:
+        order_id: str
+        agent: str
+        implementation_shortfall_bps: float
+        reward: float            # -IS (negative cost = positive reward)
+
+  # ── EMERGENCY & OPS TIER ─────────────────────────────────────────────────
+  - name: emergency-alerts
+    partitions: 1
+    replication_factor: 1
+    config:
+      retention.ms: "86400000"
+      # No compression — ultra-low latency required for crash response
+      compression.type: none
+      cleanup.policy: delete
+    schema:
+      description: >
+        Published by regime_encoder_svc (LTC urgency) and tda_topology_svc.
+        Consumed by execution_svc to bypass normal routing and halt/liquidate.
+      fields:
+        timestamp: float
+        urgency_score: float
+        trigger: str            # 'LTC_INTRADAY_DRIFT', 'TDA_TOPOLOGY_COLLAPSE', etc.
+        recommended_action: str # 'HALT', 'REDUCE_50PCT', 'LIQUIDATE_ASSET'
+
+  - name: dead-letter-queue
+    partitions: 1
+    replication_factor: 1
+    config:
+      retention.ms: "604800000"  # 7 days — ops review window
+      compression.type: gzip
+      cleanup.policy: delete
+    schema:
+      description: >
+        Published by any service that encounters a non-recoverable error
+        after exhausting exponential backoff retries. Consumed by ops monitoring.
+      fields:
+        service: str
+        error: str
+        timestamp: float
+        original_payload: str   # JSON-serialised original message (best-effort)

@@ -8,7 +8,7 @@ mv fortress_structure.txt full_project_sync.txt
 rm fortress_brain_sync.txt
 
 git add .
-git commit -m "INIT: Ouroboros Core Architecture & Trading Engine"
+git commit -m "INIT: Ouroboros Upgrade fixing"
 git push
 
 chmod +x run_backtest.sh

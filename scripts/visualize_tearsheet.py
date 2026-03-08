@@ -82,7 +82,7 @@ def _load_spy_benchmark(
     try:
         import yfinance as yf
         spy = yf.download("SPY", start=start, end=end, progress=False)
-        daily_ret = spy["Adj Close"].pct_change().dropna()
+        daily_ret = spy["Close"].pct_change().dropna()
         spy_df = pd.DataFrame({"daily_return": daily_ret})
         os.makedirs(os.path.dirname(csv_path), exist_ok=True)
         spy_df.to_csv(csv_path)

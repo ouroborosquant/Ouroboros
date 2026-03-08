@@ -36,7 +36,8 @@ class HistoricalSeeder:
             
         self.alpaca_client = StockHistoricalDataClient(
             api_key=os.getenv('ALPACA_API_KEY'),
-            secret_key=os.getenv('ALPACA_SECRET_KEY')
+            secret_key=os.getenv('ALPACA_SECRET_KEY'),
+            raw_data=False # Ensure we use the SDK's internal handling
         )
         self.db_pool = None
 
@@ -63,7 +64,8 @@ class HistoricalSeeder:
             symbol_or_symbols=universe,
             timeframe=TimeFrame.Day,
             start=start_date,
-            end=end_date
+            end=end_date,
+            feed='iex'
         )
 
         bars = self.alpaca_client.get_stock_bars(request_params)
@@ -106,7 +108,8 @@ class HistoricalSeeder:
         await self.init_db()
         
         # Define historical window (e.g., last 15 years for robust deep learning)
-        end_date = datetime.utcnow()
+        from datetime import timezone
+        end_date = datetime.now(timezone.utc) - timedelta(minutes=20)
         start_date = end_date - timedelta(days=365 * 15)
         
         try:

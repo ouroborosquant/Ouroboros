@@ -1,0 +1,40 @@
+[INFO] Fortress v5 — Backtest Pipeline | Sun Mar  8 21:10:07 CET 2026
+[INFO] Log: /home/alexr/fortress_v5/logs/pipeline_20260308_211007.log
+
+[0;36m══════════════════════════════════════════[0m
+[0;36m  Stage 0: Forensic Data Audit[0m
+[0;36m══════════════════════════════════════════[0m
+2026-03-08 21:10:07,857 - INFO - ══════ Fortress v5 — Forensic Look-Ahead Audit ══════
+2026-03-08 21:10:07,903 - WARNING - TimescaleDB unreachable (localhost/fortress): password authentication failed for user "postgres". Falling back to synthetic parquet audit.
+2026-03-08 21:10:07,904 - INFO - Running synthetic parquet integrity audit...
+2026-03-08 21:10:07,968 - INFO -   Loaded regime_posteriors.parquet: 1,510 rows, 2019-01-02 → 2024-12-31
+2026-03-08 21:10:07,972 - INFO -   Loaded alpha_signals.parquet: 1,510 rows, 2019-01-02 → 2024-12-31
+2026-03-08 21:10:07,977 - INFO -   Loaded prices_wide.parquet: 1,510 rows, 2019-01-02 → 2024-12-31
+2026-03-08 21:10:07,981 - INFO -   Loaded returns_wide.parquet: 1,510 rows, 2019-01-02 → 2024-12-31
+2026-03-08 21:10:07,996 - INFO -   Loaded market_data.parquet: 37,750 rows, 1510 dates × 25 tickers, 2019-01-02 → 2024-12-31  [long-format]
+2026-03-08 21:10:08,005 - INFO - ✅ All cache files are temporally consistent.
+2026-03-08 21:10:08,005 - INFO - Forensic Audit Passed. ZERO look-ahead violations.
+[0;32m[OK][0m Stage 0: Forensic Data Audit complete.
+
+[0;36m══════════════════════════════════════════[0m
+[0;36m  Stage 1: Regime Posterior Precomputation[0m
+[0;36m══════════════════════════════════════════[0m
+2026-03-08 21:10:09,052 - INFO - ══════ Fortress v5 — Regime Posterior Precomputation ══════
+2026-03-08 21:10:09,052 - INFO - Window: 2019-01-02 → 2024-12-31
+2026-03-08 21:10:09,302 - INFO - Trading calendar: 1510 days
+2026-03-08 21:10:09,302 - INFO - Weights not found at models/weights/mamba_kan_latest.pt. Running in Synthetic Mode.
+2026-03-08 21:10:09,302 - INFO - Synthetic Mode active — generating regime-switching GBM market data.
+2026-03-08 21:10:09,302 - INFO - Building cross-asset correlation matrix (5-factor model)...
+2026-03-08 21:10:09,303 - INFO - Sampling Markov regime sequence...
+2026-03-08 21:10:09,312 - INFO - Regime distribution: {'bull_low_vol': 1421, 'bull_high_vol': 66, 'bear': 14, 'crisis': 9}
+2026-03-08 21:10:09,312 - INFO - Simulating 1510 days × 25 assets via Markov-switching GBM...
+2026-03-08 21:10:09,422 - INFO - ✅ Saved prices/returns → research/outputs/cache/prices_wide.parquet, research/outputs/cache/returns_wide.parquet
+2026-03-08 21:10:09,422 - INFO - Building long-format market_data parquet...
+2026-03-08 21:10:10,433 - INFO - ✅ Saved market_data → research/outputs/cache/market_data.parquet (37,750 rows)
+2026-03-08 21:10:10,434 - INFO - Constructing 52-dim obs vectors (rolling causal statistics)...
+2026-03-08 21:10:10,851 - INFO - Computing PCA surrogate regime posteriors (window=63d, dims=16)...
+2026-03-08 21:10:11,016 - INFO -   PCA posterior [200/1510] date=2019-10-17 z_mu[0]=1.962
+2026-03-08 21:10:11,182 - INFO -   PCA posterior [400/1510] date=2020-08-04 z_mu[0]=-1.937
+2026-03-08 21:10:11,345 - INFO -   PCA posterior [600/1510] date=2021-05-20 z_mu[0]=-1.995
+2026-03-08 21:10:11,512 - INFO -   PCA posterior [800/1510] date=2022-03-07 z_mu[0]=1.991
+2026-03-08 21:10:11,675 - INFO -   PCA posterior [1000/1510] date=2022-12-20 z_mu[0]=-0.099

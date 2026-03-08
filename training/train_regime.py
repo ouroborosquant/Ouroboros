@@ -366,7 +366,7 @@ class RegimeTrainer:
                     MAX(CASE WHEN m.series_id = 'PAYEMS'     THEN m.value ELSE NULL END) AS nfp,
                     MAX(CASE WHEN m.series_id = 'INDPRO'     THEN m.value ELSE NULL END) AS indpro,
                     MAX(CASE WHEN m.series_id = 'UMCSENT'    THEN m.value ELSE NULL END) AS umcsent
-                FROM prices p
+                FROM price_data p
                 LEFT JOIN fred_data m
                     ON  m.metric_date  = p.metric_date
                     AND m.as_of_date  <= p.metric_date  -- causal join: no release look-ahead
@@ -376,7 +376,7 @@ class RegimeTrainer:
             )
             SELECT * FROM daily_agg ORDER BY metric_date ASC;
         """
-
+        print(f"DEBUG - TRAINING QUERY: {query}")
         try:
             async with pool.acquire() as conn:
                 rows = await conn.fetch(query)

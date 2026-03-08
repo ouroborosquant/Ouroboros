@@ -88,8 +88,8 @@ class HistoricalSeeder:
             ))
 
         query = """
-            INSERT INTO prices (metric_date, as_of_date, ticker, open, high, low, close, volume, vwap)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            INSERT INTO prices (metric_date, as_of_date, ticker, open, high, low, close, volume, vwap, adj_close)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $7)
             ON CONFLICT (metric_date, ticker, as_of_date) DO NOTHING;
         """
 

@@ -50,8 +50,16 @@ class MambaKANEncoder(nn.Module):
         self.kan = KAN(width=kan_width, grid=kan_grid, k=kan_k, seed=42)
         
         # 4. VAE Reparameterization Heads
-        self.mu_head = nn.Linear(kan_width[-1], latent_dim)
-        self.log_sigma_head = nn.Linear(kan_width[-1], latent_dim)
+        # Ensure kan_width[-1] is treated as a plain integer
+        # Flatten the list if it's nested (e.g., [[128]] -> [128] -> 128)
+        last_val = kan_width[-1]
+        while isinstance(last_val, list):
+            last_val = last_val[0]
+
+        in_features = int(last_val)
+        
+        self.mu_head = nn.Linear(in_features, latent_dim)
+        self.log_sigma_head = nn.Linear(in_features, latent_dim)
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -87,7 +95,6 @@ class StudentTMixtureDecoder(nn.Module):
         self.sigma_net = nn.Linear(latent_dim, n_components * obs_dim)
         
         # Learnable Degrees of Freedom (nu) to dynamically adapt to kurtosis
-        # Initialized to 2.0 (representing 4 degrees of freedom, heavy tails)
         self.log_nu = nn.Parameter(torch.ones(n_components) * 2.0)
 
     def log_likelihood(self, x: torch.Tensor, z: torch.Tensor) -> torch.Tensor:
@@ -100,7 +107,9 @@ class StudentTMixtureDecoder(nn.Module):
         
         mu = self.mu_net(z).view(-1, self.n_components, self.obs_dim)
         sigma = F.softplus(self.sigma_net(z)).view(-1, self.n_components, self.obs_dim) + 1e-4
-        nu = F.softplus(self.log_nu) + 2.0  # Nu > 2 ensures finite variance
+        
+        # Shape nu to (1, 4, 1) so it broadcasts safely across (Batch, 4, 52)
+        nu = (F.softplus(self.log_nu) + 2.0).view(1, self.n_components, 1)
         
         # Expand x to match mixture components
         x_expanded = x.unsqueeze(1).expand(-1, self.n_components, -1)

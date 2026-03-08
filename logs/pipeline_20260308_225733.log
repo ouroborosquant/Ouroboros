@@ -1,0 +1,76 @@
+[INFO] Fortress v5 — Backtest Pipeline | Sun Mar  8 22:57:33 CET 2026
+[INFO] Log: /home/alexr/fortress_v5/logs/pipeline_20260308_225733.log
+
+[0;36m══════════════════════════════════════════[0m
+[0;36m  Stage 0: Forensic Data Audit[0m
+[0;36m══════════════════════════════════════════[0m
+2026-03-08 22:57:33,858 - INFO - ══════ Fortress v5 — Forensic Look-Ahead Audit ══════
+2026-03-08 22:57:33,887 - WARNING - TimescaleDB unreachable (localhost/fortress): password authentication failed for user "postgres". Falling back to synthetic parquet audit.
+2026-03-08 22:57:33,887 - INFO - Running synthetic parquet integrity audit...
+2026-03-08 22:57:33,902 - INFO -   Loaded regime_posteriors.parquet: 1,510 rows, 2019-01-02 → 2024-12-31
+2026-03-08 22:57:33,906 - INFO -   Loaded alpha_signals.parquet: 1,510 rows, 2019-01-02 → 2024-12-31
+2026-03-08 22:57:33,911 - INFO -   Loaded prices_wide.parquet: 1,510 rows, 2019-01-02 → 2024-12-31
+2026-03-08 22:57:33,914 - INFO -   Loaded returns_wide.parquet: 1,510 rows, 2019-01-02 → 2024-12-31
+2026-03-08 22:57:33,927 - INFO -   Loaded market_data.parquet: 37,750 rows, 1510 dates × 25 tickers, 2019-01-02 → 2024-12-31  [long-format]
+2026-03-08 22:57:33,933 - INFO - ✅ All cache files are temporally consistent.
+2026-03-08 22:57:33,934 - INFO - Forensic Audit Passed. ZERO look-ahead violations.
+[0;32m[OK][0m Stage 0: Forensic Data Audit complete.
+
+[0;36m══════════════════════════════════════════[0m
+[0;36m  Stage 1: Regime Posterior Precomputation[0m
+[0;36m══════════════════════════════════════════[0m
+2026-03-08 22:57:34,523 - INFO - ══════ Fortress v5 — Regime Posterior Precomputation ══════
+2026-03-08 22:57:34,523 - INFO - Window: 2019-01-02 → 2024-12-31
+2026-03-08 22:57:34,712 - INFO - Trading calendar: 1510 days
+2026-03-08 22:57:34,712 - INFO - Weights not found at models/weights/mamba_kan_latest.pt. Running in Synthetic Mode.
+2026-03-08 22:57:34,712 - INFO - Synthetic Mode active — generating regime-switching GBM market data.
+2026-03-08 22:57:34,712 - INFO - Markov stationary distribution: bull_low_vol=0.890, bull_high_vol=0.080, bear=0.026, crisis=0.004
+2026-03-08 22:57:34,712 - INFO - Building cross-asset correlation matrix (5-factor model)...
+2026-03-08 22:57:34,712 - INFO - Sampling Markov regime sequence...
+2026-03-08 22:57:34,720 - INFO - Regime distribution: {'bull_low_vol': 1421, 'bull_high_vol': 66, 'bear': 14, 'crisis': 9}
+2026-03-08 22:57:34,721 - INFO - Simulating 1510 days × 25 assets via Markov-switching GBM...
+2026-03-08 22:57:34,760 - INFO - ✅ Saved prices/returns → research/outputs/cache/prices_wide.parquet, research/outputs/cache/returns_wide.parquet
+2026-03-08 22:57:34,760 - INFO - Building long-format market_data parquet...
+2026-03-08 22:57:35,676 - INFO - ✅ Saved market_data → research/outputs/cache/market_data.parquet (37,750 rows)
+2026-03-08 22:57:35,676 - INFO - Synthetic Mode: bypassing GMM — constructing posteriors from GBM oracle labels + sign-stabilised PCA embeddings (BUG #20 ROOT CAUSE FIX).
+2026-03-08 22:57:36,884 - INFO - Synthetic oracle regime label distribution:
+2026-03-08 22:57:36,884 - INFO -   bull_low_vol        : 1421 days (94.1%)
+2026-03-08 22:57:36,884 - INFO -   bull_high_vol       :   66 days (4.4%)
+2026-03-08 22:57:36,884 - INFO -   bear                :   14 days (0.9%)
+2026-03-08 22:57:36,884 - INFO -   crisis              :    9 days (0.6%)
+2026-03-08 22:57:36,885 - INFO - z_mu[0] stats: mean=0.491 std=1.416 min=-2.123 max=2.141
+2026-03-08 22:57:36,885 - INFO - Soft posterior soft_bull_low_vol: mean=0.870 (expected ≈ 0.866)
+2026-03-08 22:57:36,893 - INFO - ✅ Saved regime posteriors → research/outputs/cache/regime_posteriors.parquet (1,510 rows)
+2026-03-08 22:57:36,893 - INFO - Regime label distribution (GMM + semantic pinning):
+2026-03-08 22:57:36,893 - INFO -   bull_low_vol        : 1421 days (94.1%)
+2026-03-08 22:57:36,893 - INFO -   bull_high_vol       :   66 days (4.4%)
+2026-03-08 22:57:36,893 - INFO -   bear                :   14 days (0.9%)
+2026-03-08 22:57:36,893 - INFO -   crisis              :    9 days (0.6%)
+2026-03-08 22:57:36,894 - INFO - Regime distribution comparison (GBM ground truth vs GMM labels):
+2026-03-08 22:57:36,894 - INFO -   bull_low_vol        : GBM=94.1%  GMM=94.1%  Δ=0.0%
+2026-03-08 22:57:36,894 - INFO -   bull_high_vol       : GBM=4.4%  GMM=4.4%  Δ=0.0%
+2026-03-08 22:57:36,894 - INFO -   bear                : GBM=0.9%  GMM=0.9%  Δ=0.0%
+2026-03-08 22:57:36,894 - INFO -   crisis              : GBM=0.6%  GMM=0.6%  Δ=0.0%
+2026-03-08 22:57:36,894 - INFO - Precompute Stage 1 complete (BUG #20 FIXED — GMM classifier). Run precompute_alpha_signals.py next.
+[0;32m[OK][0m Stage 1: Regime Posterior Precomputation complete.
+
+[0;36m══════════════════════════════════════════[0m
+[0;36m  Stage 2: Alpha Signal Precomputation[0m
+[0;36m══════════════════════════════════════════[0m
+2026-03-08 22:57:37,547 - INFO - AIS pipeline not available — Factor F9 inactive. Wire data/alt_data/ais_pipeline.py to activate.
+2026-03-08 22:57:37,548 - INFO - ══════ Fortress v5 — Alpha Signal Precomputation (P2: FactorDecayMonitor) ══════
+2026-03-08 22:57:37,548 - INFO - Loading cached market data...
+2026-03-08 22:57:37,564 - INFO - Loading cached regime posteriors...
+2026-03-08 22:57:37,568 - INFO - Market data: 1510 days × 25 assets | Regime posteriors: 1510 rows
+2026-03-08 22:57:37,569 - INFO - Aligned dataset: 1510 trading days
+2026-03-08 22:57:37,570 - INFO - GATv2 weights not found at models/weights/gat_alpha_latest.pt. Running in Surrogate Mode.
+2026-03-08 22:57:37,570 - INFO - Surrogate Mode: 9-component pipeline — F1(mom), F1b(mom6), F2(rev21), F3(vol), F4(carry), F5(tilt), F7(rev5), F8(idio), FactorDecayMonitor(P2)
+2026-03-08 22:57:37,570 - INFO - Computing Factor 1:  Cross-Sectional Momentum (12-1M)...
+2026-03-08 22:57:37,582 - INFO - Computing Factor 1b: Cross-Sectional Momentum (6-1M)...
+2026-03-08 22:57:37,596 - INFO - Computing Factor 2:  Short-Term Reversal (21d)...
+2026-03-08 22:57:37,608 - INFO - Computing Factor 3:  Low-Volatility Anomaly (63d)...
+2026-03-08 22:57:37,620 - INFO - Computing Factor 4:  Fixed-Income Carry (BUG #18 FIX)...
+2026-03-08 22:57:37,620 - INFO - Computing Factor 7:  5-Day Short-Term Reversal...
+2026-03-08 22:57:37,632 - INFO - Computing Factor 8:  Idiosyncratic Momentum...
+2026-03-08 22:57:37,659 - INFO - Computing Factor 9:  AIS Commodity Flow (optional)...
+2026-03-08 22:57:37,659 - INFO - Fitting FactorDecayMonitor (EWMA Spearman IC, halflife=63d)...

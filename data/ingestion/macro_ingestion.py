@@ -21,10 +21,11 @@ class MacroIngestionService:
     # FRED API endpoint for vintage observations
     FRED_OBS_URL = "https://api.stlouisfed.org/fred/series/observations"
 
-    def __init__(self, db_pool: asyncpg.Pool, macro_config: Dict[str, Any]):
+    def __init__(self, db_pool: asyncpg.Pool, macro_config: Any):
         """
         Initializes the FRED ingestion service.
-        macro_config should contain a list of series_ids and their publication lags.
+        macro_config can be a list of dicts (from data_sources.yaml) 
+        or a dict containing series_ids.
         """
         self.db_pool = db_pool
         self.config = macro_config
@@ -35,12 +36,21 @@ class MacroIngestionService:
         # We process a maximum of 120 requests per minute to respect FRED rate limits
         self.rate_limit_semaphore = asyncio.Semaphore(2) 
 
+    def _get_series_list(self) -> List[str]:
+        """Helper to extract series IDs from various config formats."""
+        if isinstance(self.config, list):
+            # Handles the list of dicts format in config/data_sources.yaml
+            return [item['id'] for item in self.config if 'id' in item]
+        if isinstance(self.config, dict):
+            return self.config.get('series_ids', ['T10Y2Y', 'NFCI', 'CPIAUCSL', 'UNRATE', 'WALCL'])
+        return ['T10Y2Y', 'NFCI', 'CPIAUCSL', 'UNRATE', 'WALCL']
+
     async def run(self):
         """
         The continuous async loop called by the master DataPipeline orchestrator.
         Runs once daily to check for new macroeconomic releases.
         """
-        series_list = self.config.get('series_ids', ['T10Y2Y', 'NFCI', 'CPIAUCSL', 'UNRATE', 'WALCL'])
+        series_list = self._get_series_list()
         
         while True:
             logger.info("Checking for daily FRED macroeconomic updates...")
@@ -52,33 +62,36 @@ class MacroIngestionService:
             logger.info("Macro update complete. Sleeping for 24 hours.")
             await asyncio.sleep(86400) # Sleep for 24 hours
 
-    async def fetch_and_store_vintage(self, series_id: str, start_date: str, end_date: str):
-        """
-        Fetches data from FRED using the realtime_start and realtime_end parameters.
-        This guarantees we pull the exact vintage of data available ON that date.
-        """
+    async def fetch_and_store_vintage(self, series_id: str, start_date: Any, end_date: Any):
+        s_str = start_date.strftime('%Y-%m-%d') if hasattr(start_date, 'strftime') else str(start_date).strip()
+        e_str = end_date.strftime('%Y-%m-%d') if hasattr(end_date, 'strftime') else str(end_date).strip()
+
         params = {
             "series_id": series_id,
-            "api_key": self.api_key,
+            "api_key": self.api_key.strip(),
             "file_type": "json",
-            "observation_start": start_date,
-            "observation_end": end_date,
-            # The 'realtime' parameters are the secret to preventing look-ahead bias
-            "realtime_start": start_date, 
-            "realtime_end": end_date
+            "observation_start": s_str,
+            "observation_end": e_str,
+            "realtime_start": s_str, 
+            "realtime_end": e_str  # <--- CRITICAL: This must match the chunk end
         }
+        # ... rest of the method remains the same ...
 
         async with self.rate_limit_semaphore:
             async with aiohttp.ClientSession() as session:
                 try:
+                    # Debug: Print the URL once to see exactly what is being sent
+                    # logger.info(f"Requesting FRED: {self.FRED_OBS_URL}?series_id={series_id}&observation_start={s_str}")
+                    
                     async with session.get(self.FRED_OBS_URL, params=params) as response:
                         if response.status != 200:
-                            logger.error(f"FRED API Error {response.status} for {series_id}")
+                            # Capture the error message from FRED to see WHY it's 400
+                            err_body = await response.text()
+                            logger.error(f"FRED API Error {response.status} for {series_id}: {err_body}")
                             return
                         
                         data = await response.json()
                         observations = data.get('observations', [])
-                        
                         if observations:
                             await self._insert_into_db(series_id, observations)
                             
@@ -105,12 +118,14 @@ class MacroIngestionService:
             if obs['value'] == '.':  # FRED uses '.' for null/missing values
                 continue
                 
-            metric_date = datetime.strptime(obs['date'], '%Y-%m-%d').date()
-            # The realtime_start from ALFRED is the exact date this specific value became public
-            as_of_date = datetime.strptime(obs['realtime_start'], '%Y-%m-%d').date()
-            value = float(obs['value'])
-            
-            records.append((metric_date, as_of_date, series_id, value))
+            try:
+                metric_date = datetime.strptime(obs['date'], '%Y-%m-%d').date()
+                # The realtime_start from ALFRED is the exact date this specific value became public
+                as_of_date = datetime.strptime(obs['realtime_start'], '%Y-%m-%d').date()
+                value = float(obs['value'])
+                records.append((metric_date, as_of_date, series_id, value))
+            except (ValueError, KeyError):
+                continue
 
         if not records:
             return
@@ -121,20 +136,20 @@ class MacroIngestionService:
                 
         logger.debug(f"Inserted {len(records)} vintage records for {series_id}.")
 
-    async def seed_historical_data(self, start_date: str = "2000-01-01"):
-        """
-        Utility method used ONLY during initial setup (scripts/download_history.py).
-        Downloads the entire vintage history for all configured series.
-        Because it uses ALFRED, the as_of_date correctly preserves the exact timeline
-        of historical revisions.
-        """
-        series_list = self.config.get('series_ids', ['T10Y2Y', 'NFCI', 'CPIAUCSL', 'UNRATE', 'WALCL'])
-        today_str = datetime.utcnow().strftime('%Y-%m-%d')
-        
-        logger.info(f"Seeding historical ALFRED vintage data from {start_date}...")
-        
-        # For historical seeding, we expand the realtime window to capture all past revisions
+    async def seed_historical_data(self, start_date: Any = "2011-03-12"):
+        series_list = self._get_series_list()
+        current_start = datetime.strptime(start_date, '%Y-%m-%d') if isinstance(start_date, str) else start_date
+        final_end = datetime.utcnow()
+
         for series_id in series_list:
-            await self.fetch_and_store_vintage(series_id, start_date, today_str)
+            chunk_start = current_start
+            while chunk_start < final_end:
+                # 3-year chunks (1095 days) to stay well under the 2000-vintage limit
+                chunk_end = min(chunk_start + timedelta(days=3*365), final_end)
+                
+                logger.info(f" -> Fetching {series_id} chunk: {chunk_start.date()} to {chunk_end.date()}")
+                await self.fetch_and_store_vintage(series_id, chunk_start, chunk_end)
+                
+                chunk_start = chunk_end + timedelta(days=1)
             
         logger.info("Historical macro seeding complete.")

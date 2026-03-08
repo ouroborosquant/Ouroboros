@@ -3,6 +3,16 @@
 #
 # Global Hyperparameter and Dimensionality Mapping.
 # Defines the exact tensor shapes to ensure all models align in VRAM.
+#
+# P2 CHANGES:
+#   world_model.sde_method: 'euler' → 'milstein'
+#     Strong convergence order 0.5 → 1.0. Required for valid CVaR estimates
+#     in the 21-day stress test. Milstein eliminates O(√dt) per-step path bias.
+#     dt is now 1/252 (annualised daily) — set in generate_synthetic_paths().
+#
+#   edt.lambda_econ, edt.lambda_calmar, edt.lambda_turnover:
+#     Economic loss weights for the Sortino + Calmar + Turnover composite loss.
+#     train_edt.py reads these as overrides; defaults are compiled into the trainer.
 
 # ── GLOBAL SYSTEM SETTINGS ──────────────────────────────────────────
 system:
@@ -41,6 +51,10 @@ edt:
   learning_rate: 0.0003
   batch_size: 128
   epochs: 200
+  # ── P2: Economic loss weights ──────────────────────────────────────
+  lambda_econ: 0.30       # Total weight on economic loss vs DDPM denoising loss
+  lambda_calmar: 0.20     # Calmar ratio weight within economic loss
+  lambda_turnover: 0.10   # One-way turnover penalty coefficient
 
 # ── 4. DEEP HEDGING NETWORK ─────────────────────────────────────────
 hedging:
@@ -63,7 +77,13 @@ world_model:
   latent_dim: 16          # Conditioned on Mamba-KAN regime
   hidden_dim: 128
   brownian_size: 10       # Number of independent stochastic shocks
-  sde_method: 'euler'
+  # P2 FIX: 'euler' → 'milstein'
+  # Milstein achieves strong convergence order 1.0 for state-dependent diffusion.
+  # Euler-Maruyama is O(√dt) per step; Milstein eliminates the leading error term
+  # via the (g·∂g/∂y)·(ΔW²-dt)/2 correction computed by torchsde via forward-mode AD.
+  sde_method: 'milstein'
+  # dt is now enforced as 1/252 inside generate_synthetic_paths() — not set here.
+  # The time grid is always in annualised units: ts = linspace(0, n_steps/252, n_steps+1).
   batch_size: 64
   epochs: 150
 

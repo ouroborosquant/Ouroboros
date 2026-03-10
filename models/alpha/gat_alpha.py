@@ -7,6 +7,7 @@ Processes the causal asset graph to produce per-asset expected alpha scores.
 Architecture ONLY. No training loops.
 """
 from typing import Tuple
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

@@ -1,0 +1,33 @@
+[INFO] Fortress v5 — Backtest Pipeline | Mon Mar  9 11:34:31 CET 2026
+[INFO] Log: /home/alexr/fortress_v5/logs/pipeline_20260309_113431.log
+
+[0;36m══════════════════════════════════════════[0m
+[0;36m  Stage 0: Forensic Data Audit[0m
+[0;36m══════════════════════════════════════════[0m
+2026-03-09 11:34:31,490 - INFO - ══════ Fortress v5 — Forensic Look-Ahead Audit ══════
+2026-03-09 11:34:31,546 - INFO - TimescaleDB reachable. Running institutional look-ahead audit on fortress...
+2026-03-09 11:34:34,709 - INFO - ✅ Macro Hypertable: ZERO look-ahead bias detected.
+2026-03-09 11:34:35,223 - INFO - ✅ Price Hypertable: ZERO look-ahead bias detected.
+2026-03-09 11:34:35,233 - INFO - ✅ TimescaleDB institutional audit complete.
+2026-03-09 11:34:35,233 - INFO - Forensic Audit Passed. ZERO look-ahead violations.
+[0;32m[OK][0m Stage 0: Forensic Data Audit complete.
+
+[0;36m══════════════════════════════════════════[0m
+[0;36m  Stage 1: Regime Posterior Precomputation[0m
+[0;36m══════════════════════════════════════════[0m
+2026-03-09 11:34:35,912 - INFO - ══════ Fortress v5 — Regime Posterior Precomputation ══════
+2026-03-09 11:34:35,912 - INFO - Window: 2019-01-02 → 2024-12-31
+2026-03-09 11:34:36,122 - INFO - Trading calendar: 1510 days
+/home/alexr/fortress_v5/scripts/precompute_regime_posteriors.py:625: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+  model.load_state_dict(torch.load(_WEIGHTS_PATH, map_location=device))
+2026-03-09 11:34:38,988 - INFO - ✅ Mamba-KAN weights loaded from models/weights/mamba_kan_latest.pt. Running Full Mode.
+2026-03-09 11:34:38,988 - INFO - Fetching data from TimescaleDB and running inference for 1510 dates...
+2026-03-09 11:34:39,114 - INFO - TimescaleDB async pool initialised (min=5, max=20).
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/kan/MultKAN.py:813: UserWarning: std(): degrees of freedom is <= 0. Correction should be strictly less than the reduction factor (input numel divided by output numel). (Triggered internally at ../aten/src/ATen/native/ReduceOps.cpp:1808.)
+  self.subnode_actscale.append(torch.std(x, dim=0).detach())
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/kan/MultKAN.py:823: UserWarning: std(): degrees of freedom is <= 0. Correction should be strictly less than the reduction factor (input numel divided by output numel). (Triggered internally at ../aten/src/ATen/native/ReduceOps.cpp:1808.)
+  input_range = torch.std(preacts, dim=0) + 0.1
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/kan/MultKAN.py:824: UserWarning: std(): degrees of freedom is <= 0. Correction should be strictly less than the reduction factor (input numel divided by output numel). (Triggered internally at ../aten/src/ATen/native/ReduceOps.cpp:1808.)
+  output_range_spline = torch.std(postacts_numerical, dim=0) # for training, only penalize the spline part
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/kan/MultKAN.py:825: UserWarning: std(): degrees of freedom is <= 0. Correction should be strictly less than the reduction factor (input numel divided by output numel). (Triggered internally at ../aten/src/ATen/native/ReduceOps.cpp:1808.)
+  output_range = torch.std(postacts, dim=0) # for visualization, include the contribution from both spline + symbolic

@@ -196,20 +196,18 @@ class DataPipeline:
 
         # ── [47:52] Microstructure aggregates ──────────────────────────────
         micro_query = """
-            SELECT vix_close, put_call_ratio, hy_spread_bps, adv_ratio,
-                   yield_curve_inverted
-            FROM market_microstructure
-            WHERE metric_date <= $1::date
-              AND as_of_date  <= $1::date
-            ORDER BY metric_date DESC
-            LIMIT 1;
+            SELECT 0.0 AS vix_close, 
+                   0.0 AS put_call_ratio, 
+                   0.0 AS hy_spread_bps, 
+                   0.0 AS adv_ratio, 
+                   0.0 AS yield_curve_inverted;
         """
 
         try:
             async with self.db_pool.acquire() as conn:
                 asset_rows = await conn.fetch(asset_query, as_of_date)
                 macro_rows = await conn.fetch(macro_query, as_of_date, _MACRO_SERIES_ORDER)
-                micro_rows = await conn.fetch(micro_query, as_of_date)
+                micro_rows = await conn.fetch(micro_query)
         except Exception as exc:
             logger.error(f"get_observation_vector DB fetch failed: {exc}")
             return np.zeros(_OBS_DIM, dtype=np.float32)

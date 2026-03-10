@@ -1,0 +1,185 @@
+[INFO] Fortress v5 — Backtest Pipeline | Mon Mar  9 11:14:15 CET 2026
+[INFO] Log: /home/alexr/fortress_v5/logs/pipeline_20260309_111415.log
+
+[0;36m══════════════════════════════════════════[0m
+[0;36m  Stage 0: Forensic Data Audit[0m
+[0;36m══════════════════════════════════════════[0m
+2026-03-09 11:14:15,726 - INFO - ══════ Fortress v5 — Forensic Look-Ahead Audit ══════
+2026-03-09 11:14:15,756 - INFO - TimescaleDB reachable. Running institutional look-ahead audit on fortress...
+2026-03-09 11:14:17,721 - INFO - ✅ Macro Hypertable: ZERO look-ahead bias detected.
+2026-03-09 11:14:18,219 - INFO - ✅ Price Hypertable: ZERO look-ahead bias detected.
+2026-03-09 11:14:18,233 - INFO - ✅ TimescaleDB institutional audit complete.
+2026-03-09 11:14:18,233 - INFO - Forensic Audit Passed. ZERO look-ahead violations.
+[0;32m[OK][0m Stage 0: Forensic Data Audit complete.
+
+[0;36m══════════════════════════════════════════[0m
+[0;36m  Stage 1: Regime Posterior Precomputation[0m
+[0;36m══════════════════════════════════════════[0m
+2026-03-09 11:14:18,932 - INFO - ══════ Fortress v5 — Regime Posterior Precomputation ══════
+2026-03-09 11:14:18,932 - INFO - Window: 2019-01-02 → 2024-12-31
+2026-03-09 11:14:19,139 - INFO - Trading calendar: 1510 days
+/home/alexr/fortress_v5/scripts/precompute_regime_posteriors.py:625: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+  model.load_state_dict(torch.load(_WEIGHTS_PATH, map_location=device))
+2026-03-09 11:14:23,480 - INFO - ✅ Mamba-KAN weights loaded from models/weights/mamba_kan_latest.pt. Running Full Mode.
+2026-03-09 11:14:23,480 - INFO - Fetching data from TimescaleDB and running inference for 1510 dates...
+2026-03-09 11:14:23,577 - INFO - TimescaleDB async pool initialised (min=5, max=20).
+2026-03-09 11:14:25,283 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:25,587 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:25,911 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:26,214 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:26,505 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:26,959 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:27,003 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:27,051 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:27,101 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:27,146 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:27,201 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:27,248 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:27,294 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:27,350 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:27,398 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:27,442 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:27,488 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:27,537 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:27,580 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:27,625 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:27,681 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:27,723 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:27,766 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:27,821 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:27,865 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:27,908 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:27,951 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:27,998 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:28,046 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:28,102 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:28,142 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:28,185 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:28,239 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:28,283 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:28,324 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:28,368 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:28,408 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:28,448 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:28,493 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:28,533 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:28,600 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:28,668 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:28,721 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:28,763 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:28,809 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:28,866 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:28,913 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:28,957 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:29,010 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:29,057 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:29,106 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:29,153 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:29,198 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:29,244 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:29,285 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:29,341 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:29,382 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:29,437 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:29,481 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:29,524 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:29,570 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:29,608 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:29,647 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:29,689 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:29,728 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:29,769 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:29,807 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:29,845 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:29,899 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:29,943 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:29,986 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:30,028 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:30,075 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:30,135 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:30,184 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:30,224 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:30,275 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:30,321 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:30,361 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:30,404 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:30,446 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:30,484 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:30,523 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:30,561 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:30,601 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:30,639 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:30,677 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:30,716 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:30,757 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:30,797 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:30,845 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:30,884 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:30,925 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:30,966 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:31,007 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:31,061 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:31,117 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:31,182 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:31,224 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:31,266 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:31,315 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:31,356 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:31,396 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:31,436 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:31,480 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:31,517 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:31,554 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:31,592 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:31,631 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:31,672 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:31,711 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:31,749 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:31,790 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:31,831 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:31,873 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:31,915 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:31,956 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:31,998 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:32,038 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:32,079 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:32,123 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:32,166 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:32,208 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:32,247 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:32,289 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:32,332 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:32,371 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:32,424 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:32,465 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:32,513 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:32,553 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:32,594 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:32,634 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:32,682 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:32,735 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:32,778 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:32,817 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:32,854 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:32,896 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:32,938 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:32,979 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:33,021 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:33,059 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:33,098 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:33,136 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:33,188 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:33,225 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:33,262 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:33,304 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:33,342 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:33,379 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:33,417 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:33,468 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:33,507 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:33,549 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:33,585 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:33,627 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:33,671 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:33,709 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist
+2026-03-09 11:14:33,749 - ERROR - get_observation_vector DB fetch failed: relation "market_microstructure" does not exist

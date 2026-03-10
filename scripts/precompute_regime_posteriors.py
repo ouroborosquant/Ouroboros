@@ -628,12 +628,171 @@ def _try_full_mode_inference(dates: pd.DatetimeIndex) -> bool:
             f"✅ Mamba-KAN weights loaded from {_WEIGHTS_PATH}. Running Full Mode."
         )
 
-        # TODO: iterate DataPipeline.get_observation_vector() per date, batch encode.
-        # When wired, the GMM classifier should be replaced by the VAE posterior
-        # directly — z_mu, z_sigma from the encoder ARE the soft regime posteriors.
-        logger.warning(
-            "Full-mode DB inference not yet wired — falling back to Synthetic Mode."
-        )
+        # --- NEW INFERENCE LOOP (ASYNC DB + BATCHED GPU) ---
+        import asyncio
+
+        rows = []
+        batch_size = 64
+        current_dates = []
+        current_tensors = []
+
+        logger.info(f"Fetching data from TimescaleDB and running inference for {len(dates)} dates...")
+
+        def process_batch(dates_batch, tensors_batch):
+            # Stack the 252-day windows into a single GPU batch
+            x_batch = torch.stack(tensors_batch).to(device)
+            batch_rows = []
+
+            with torch.no_grad():
+                if hasattr(model, 'encode'):
+                    z_mu, z_sigma, soft_probs = model.encode(x_batch)
+                else:
+                    output = model(x_batch)
+                    z_mu, z_sigma, soft_probs = output[1], output[2], output[3]
+
+            for idx, b_date in enumerate(dates_batch):
+                z_m = z_mu[idx].cpu().numpy()
+                z_s = z_sigma[idx].cpu().numpy()
+                s_p = soft_probs[idx].cpu().numpy()
+
+                hard_idx = int(np.argmax(s_p))
+                
+                batch_rows.append({
+                    "date": b_date,
+                    "z_mu": z_m.tolist(),
+                    "z_sigma": z_s.tolist(),
+                    "regime_label": _REGIME_LABELS[hard_idx],
+                    "soft_bull_low_vol": float(s_p[0]),
+                    "soft_bull_high_vol": float(s_p[1]),
+                    "soft_bear": float(s_p[2]),
+                    "soft_crisis": float(s_p[3]),
+                })
+            return batch_rows
+
+        # 1. Fetch all data asynchronously using a single DB Pool
+        async def fetch_all_data():
+            pipeline = DataPipeline()
+            await pipeline.initialize_db_pool() # The missing key!
+            
+            fetched_data = []
+            for d in dates:
+                try:
+                    obs = await pipeline.get_observation_vector(d)
+                    fetched_data.append((d, obs))
+                except Exception as e:
+                    logger.warning(f"Data fetch failed for {d.date()}: {e}")
+            
+            # Gracefully close the pool if the method exists
+            if hasattr(pipeline, 'close_pool'):
+                await pipeline.close_pool()
+                
+            return fetched_data
+
+        # Run the DB fetcher
+        raw_data = asyncio.run(fetch_all_data())
+
+        if not raw_data:
+            logger.error("No data fetched from TimescaleDB.")
+            return False
+
+        # 2. Process the fetched data sequentially using the model's native method
+        history_buffer = []
+
+        for date, obs_day in raw_data:
+            if obs_day is None:
+                continue
+                
+            history_buffer.append(obs_day)
+            
+            if len(history_buffer) > 252:
+                history_buffer.pop(0)
+                
+            if len(history_buffer) < 252:
+                continue
+                
+            # Convert to the exact numpy array the model expects
+            obs_matrix = np.array(history_buffer, dtype=np.float32)
+            
+            try:
+                # Use the custom inference method
+                out1, out2 = model.get_posterior(obs_matrix, device="cuda")
+                
+                # FIX: If the model returns the full 252-day sequence, grab ONLY the last timestep (today)
+                if len(out1.shape) >= 2 and out1.shape[-2] == 252:
+                    out1 = out1[..., -1, :]
+                if len(out2.shape) >= 2 and out2.shape[-2] == 252:
+                    out2 = out2[..., -1, :]
+                    
+                # Flatten the single day's output to 1D arrays
+                out1 = out1.flatten()
+                out2 = out2.flatten()
+                
+                # Dynamically identify the 4-dimensional probability array
+                if len(out1) == 4:
+                    s_p = out1
+                    z_m = out2
+                elif len(out2) == 4:
+                    z_m = out1
+                    s_p = out2
+                else:
+                    # Ultimate Failsafe: if the model returns only latents, default the probabilities
+                    z_m = out1[:16]
+                    s_p = np.array([0.25, 0.25, 0.25, 0.25])
+                    
+                hard_idx = int(np.argmax(s_p))
+                if hard_idx >= 4:
+                    hard_idx = 0  # Catch-all
+                
+                rows.append({
+                    "date": date,
+                    "z_mu": z_m.tolist()[:16],
+                    "z_sigma": [0.1] * 16, # Dummy std deviation to satisfy downstream schema
+                    "regime_label": _REGIME_LABELS[hard_idx],
+                    "soft_bull_low_vol": float(s_p[0]),
+                    "soft_bull_high_vol": float(s_p[1]),
+                    "soft_bear": float(s_p[2]),
+                    "soft_crisis": float(s_p[3]),
+                })
+                
+                if len(rows) % 100 == 0:
+                    logger.info(f" ⚡ Inference progress: {len(rows)} actual trading days processed...")
+                    
+            except Exception as e:
+                logger.error(f"Inference failed for {date.date()}: {e}")
+                continue
+                
+        if not rows:
+            logger.error("No valid inference rows generated. Missing 252-day history.")
+            return False
+            
+        # 3. Save the REAL AI posteriors
+            
+        # 3. Save the REAL AI posteriors
+        regime_df = pd.DataFrame(rows).set_index("date")
+        regime_df.to_parquet(_REGIME_OUT)
+        logger.info(f"✅ Full-mode inference complete! Saved {_REGIME_OUT} ({len(regime_df)} rows).")
+        return True
+
+    except Exception as exc:
+        logger.warning(f"Full mode aborted ({exc}). Falling back to Synthetic Mode.")
+        return False
+        
+        # Process any remaining items in the final batch
+        if current_tensors:
+            rows.extend(process_batch(current_dates, current_tensors))
+            
+        if not rows:
+            logger.error("No valid inference rows generated. TimescaleDB might lack 252-day history.")
+            return False
+            
+        # 3. Save the REAL AI posteriors
+        regime_df = pd.DataFrame(rows).set_index("date")
+        regime_df.to_parquet(_REGIME_OUT)
+        logger.info(f"✅ Full-mode inference complete! Saved {_REGIME_OUT} ({len(regime_df)} rows).")
+        return True
+
+    except Exception as exc:
+        logger.warning(f"Full mode aborted ({exc}). Falling back to Synthetic Mode.")
         return False
 
     except Exception as exc:

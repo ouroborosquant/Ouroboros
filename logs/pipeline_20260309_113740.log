@@ -1,0 +1,497 @@
+[INFO] Fortress v5 — Backtest Pipeline | Mon Mar  9 11:37:40 CET 2026
+[INFO] Log: /home/alexr/fortress_v5/logs/pipeline_20260309_113740.log
+
+[0;36m══════════════════════════════════════════[0m
+[0;36m  Stage 0: Forensic Data Audit[0m
+[0;36m══════════════════════════════════════════[0m
+2026-03-09 11:37:40,652 - INFO - ══════ Fortress v5 — Forensic Look-Ahead Audit ══════
+2026-03-09 11:37:40,682 - INFO - TimescaleDB reachable. Running institutional look-ahead audit on fortress...
+2026-03-09 11:37:42,425 - INFO - ✅ Macro Hypertable: ZERO look-ahead bias detected.
+2026-03-09 11:37:42,920 - INFO - ✅ Price Hypertable: ZERO look-ahead bias detected.
+2026-03-09 11:37:42,930 - INFO - ✅ TimescaleDB institutional audit complete.
+2026-03-09 11:37:42,930 - INFO - Forensic Audit Passed. ZERO look-ahead violations.
+[0;32m[OK][0m Stage 0: Forensic Data Audit complete.
+
+[0;36m══════════════════════════════════════════[0m
+[0;36m  Stage 1: Regime Posterior Precomputation[0m
+[0;36m══════════════════════════════════════════[0m
+2026-03-09 11:37:43,627 - INFO - ══════ Fortress v5 — Regime Posterior Precomputation ══════
+2026-03-09 11:37:43,628 - INFO - Window: 2019-01-02 → 2024-12-31
+2026-03-09 11:37:43,892 - INFO - Trading calendar: 1510 days
+/home/alexr/fortress_v5/scripts/precompute_regime_posteriors.py:625: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+  model.load_state_dict(torch.load(_WEIGHTS_PATH, map_location=device))
+2026-03-09 11:37:46,903 - INFO - ✅ Mamba-KAN weights loaded from models/weights/mamba_kan_latest.pt. Running Full Mode.
+2026-03-09 11:37:46,903 - INFO - Fetching data from TimescaleDB and running inference for 1510 dates...
+2026-03-09 11:37:47,025 - INFO - TimescaleDB async pool initialised (min=5, max=20).
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/kan/MultKAN.py:813: UserWarning: std(): degrees of freedom is <= 0. Correction should be strictly less than the reduction factor (input numel divided by output numel). (Triggered internally at ../aten/src/ATen/native/ReduceOps.cpp:1808.)
+  self.subnode_actscale.append(torch.std(x, dim=0).detach())
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/kan/MultKAN.py:823: UserWarning: std(): degrees of freedom is <= 0. Correction should be strictly less than the reduction factor (input numel divided by output numel). (Triggered internally at ../aten/src/ATen/native/ReduceOps.cpp:1808.)
+  input_range = torch.std(preacts, dim=0) + 0.1
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/kan/MultKAN.py:824: UserWarning: std(): degrees of freedom is <= 0. Correction should be strictly less than the reduction factor (input numel divided by output numel). (Triggered internally at ../aten/src/ATen/native/ReduceOps.cpp:1808.)
+  output_range_spline = torch.std(postacts_numerical, dim=0) # for training, only penalize the spline part
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/kan/MultKAN.py:825: UserWarning: std(): degrees of freedom is <= 0. Correction should be strictly less than the reduction factor (input numel divided by output numel). (Triggered internally at ../aten/src/ATen/native/ReduceOps.cpp:1808.)
+  output_range = torch.std(postacts, dim=0) # for visualization, include the contribution from both spline + symbolic
+2026-03-09 11:59:37,196 - INFO -  ⚡ Inference progress: 100 actual trading days processed...
+2026-03-09 12:20:32,262 - INFO -  ⚡ Inference progress: 200 actual trading days processed...
+2026-03-09 12:43:01,498 - INFO -  ⚡ Inference progress: 300 actual trading days processed...
+2026-03-09 13:03:28,277 - INFO -  ⚡ Inference progress: 400 actual trading days processed...
+2026-03-09 13:24:24,114 - INFO -  ⚡ Inference progress: 500 actual trading days processed...
+2026-03-09 13:44:58,328 - INFO -  ⚡ Inference progress: 600 actual trading days processed...
+2026-03-09 14:05:48,313 - INFO -  ⚡ Inference progress: 700 actual trading days processed...
+2026-03-09 14:26:03,697 - INFO -  ⚡ Inference progress: 800 actual trading days processed...
+2026-03-09 14:46:36,257 - INFO -  ⚡ Inference progress: 900 actual trading days processed...
+2026-03-09 15:06:35,827 - INFO -  ⚡ Inference progress: 1000 actual trading days processed...
+2026-03-09 15:26:28,362 - INFO -  ⚡ Inference progress: 1100 actual trading days processed...
+2026-03-09 15:46:07,057 - INFO -  ⚡ Inference progress: 1200 actual trading days processed...
+2026-03-09 15:57:55,485 - INFO - ✅ Full-mode inference complete! Saved research/outputs/cache/regime_posteriors.parquet (1259 rows).
+2026-03-09 15:57:55,512 - INFO - Full-mode inference complete.
+checkpoint directory created: ./model
+saving model version 0.0
+[0;32m[OK][0m Stage 1: Regime Posterior Precomputation complete.
+
+[0;36m══════════════════════════════════════════[0m
+[0;36m  Stage 2: Alpha Signal Precomputation[0m
+[0;36m══════════════════════════════════════════[0m
+2026-03-09 15:57:57,817 - INFO - AIS pipeline not available — Factor F9 inactive. Wire data/alt_data/ais_pipeline.py to activate.
+2026-03-09 15:57:57,817 - INFO - ══════ Fortress v5 — Alpha Signal Precomputation (P2: FactorDecayMonitor) ══════
+2026-03-09 15:57:57,817 - INFO - Loading cached market data...
+2026-03-09 15:57:57,845 - INFO - Loading cached regime posteriors...
+2026-03-09 15:57:57,851 - INFO - Market data: 1510 days × 25 assets | Regime posteriors: 1259 rows
+2026-03-09 15:57:57,854 - INFO - Aligned dataset: 1259 trading days
+2026-03-09 15:57:57,854 - INFO - GATv2 weights not found at models/weights/gat_alpha_latest.pt. Running in Surrogate Mode.
+2026-03-09 15:57:57,854 - INFO - Surrogate Mode: 9-component pipeline — F1(mom), F1b(mom6), F2(rev21), F3(vol), F4(carry), F5(tilt), F7(rev5), F8(idio), FactorDecayMonitor(P2)
+2026-03-09 15:57:57,854 - INFO - Computing Factor 1:  Cross-Sectional Momentum (12-1M)...
+2026-03-09 15:57:57,867 - INFO - Computing Factor 1b: Cross-Sectional Momentum (6-1M)...
+2026-03-09 15:57:57,879 - INFO - Computing Factor 2:  Short-Term Reversal (21d)...
+2026-03-09 15:57:57,891 - INFO - Computing Factor 3:  Low-Volatility Anomaly (63d)...
+2026-03-09 15:57:57,903 - INFO - Computing Factor 4:  Fixed-Income Carry (BUG #18 FIX)...
+2026-03-09 15:57:57,903 - INFO - Computing Factor 7:  5-Day Short-Term Reversal...
+2026-03-09 15:57:57,914 - INFO - Computing Factor 8:  Idiosyncratic Momentum...
+2026-03-09 15:57:57,943 - INFO - Computing Factor 9:  AIS Commodity Flow (optional)...
+2026-03-09 15:57:57,943 - INFO - Fitting FactorDecayMonitor (EWMA Spearman IC, halflife=63d)...
+2026-03-09 15:57:59,346 - INFO - FactorDecayMonitor fit complete. Terminal EWMA IC per factor:
+2026-03-09 15:57:59,346 - INFO -   F1_mom      : IC_ewma(T) = +0.0111  [❌ DECAYED]
+2026-03-09 15:57:59,346 - INFO -   F1b_mom6    : IC_ewma(T) = +0.0603  [✅ ACTIVE]
+2026-03-09 15:57:59,346 - INFO -   F2_rev21    : IC_ewma(T) = -0.0156  [❌ DECAYED]
+2026-03-09 15:57:59,346 - INFO -   F3_vol      : IC_ewma(T) = +0.0048  [❌ DECAYED]
+2026-03-09 15:57:59,346 - INFO -   F4_carry    : IC_ewma(T) = +0.0187  [❌ DECAYED]
+2026-03-09 15:57:59,346 - INFO -   F7_rev5     : IC_ewma(T) = +0.0177  [❌ DECAYED]
+2026-03-09 15:57:59,346 - INFO -   F8_idio     : IC_ewma(T) = +0.0483  [✅ ACTIVE]
+2026-03-09 15:57:59,346 - INFO - Computing Factors 5/6: Regime Tilt + Price Trend Override (BUG #17 FIX) + decay-gated blend loop...
+2026-03-09 15:57:59,347 - INFO -   [0/1259] 2019-12-31 | z_pca=-0.04 z_eff=-0.04 | Regime=neutral | ActiveFactors=0/7 | Top: SHV(0.11), BIL(0.11), VIXY(0.03) | Bot: EEM(-0.03), EFA(-0.03), IWM(-0.03)
+2026-03-09 15:57:59,378 - INFO -   [200/1259] 2020-10-15 | z_pca=-0.04 z_eff=-0.32 | Regime=neutral | ActiveFactors=3/7 | Top: USO(0.93), XLK(0.89), XLE(0.87) | Bot: IEF(-0.81), SHY(-0.76), VTV(-0.75)
+2026-03-09 15:57:59,417 - INFO -   [400/1259] 2021-08-03 | z_pca=-0.05 z_eff=+0.55 | Regime=bull_high_vol | ActiveFactors=3/7 | Top: VNQ(0.97), XLE(0.91), USO(0.91) | Bot: GLD(-0.96), SLV(-0.93), SHY(-0.82)
+2026-03-09 15:57:59,455 - INFO -   [600/1259] 2022-05-18 | z_pca=-0.04 z_eff=+0.35 | Regime=neutral | ActiveFactors=6/7 | Top: SLV(0.85), USO(0.82), PDBC(0.80) | Bot: XLF(-0.85), QQQ(-0.61), SPY(-0.59)
+2026-03-09 15:57:59,495 - INFO -   [800/1259] 2023-03-07 | z_pca=-0.05 z_eff=+1.03 | Regime=bull_high_vol | ActiveFactors=5/7 | Top: EFA(0.88), VTV(0.84), VNQ(0.84) | Bot: TLT(-0.86), SLV(-0.83), GLD(-0.80)
+2026-03-09 15:57:59,535 - INFO -   [1000/1259] 2023-12-20 | z_pca=-0.04 z_eff=-0.78 | Regime=bear_market | ActiveFactors=6/7 | Top: IEF(0.60), SHY(0.57), TLT(0.49) | Bot: SLV(-0.65), XLE(-0.64), USO(-0.62)
+2026-03-09 15:57:59,574 - INFO -   [1200/1259] 2024-10-08 | z_pca=-0.04 z_eff=+0.47 | Regime=neutral | ActiveFactors=3/7 | Top: XLF(0.99), SPY(0.98), QQQ(0.95) | Bot: SLV(-0.97), GLD(-0.96), USO(-0.96)
+2026-03-09 15:57:59,586 - INFO - Factor decay gating summary (% of days zeroed by IC monitor):
+2026-03-09 15:57:59,586 - INFO -   F1_mom      : 43.1% of days gated out
+2026-03-09 15:57:59,586 - INFO -   F1b_mom6    : 34.6% of days gated out
+2026-03-09 15:57:59,586 - INFO -   F2_rev21    : 38.8% of days gated out
+2026-03-09 15:57:59,587 - INFO -   F3_vol      : 44.1% of days gated out
+2026-03-09 15:57:59,587 - INFO -   F4_carry    : 46.2% of days gated out
+2026-03-09 15:57:59,587 - INFO -   F7_rev5     : 37.6% of days gated out
+2026-03-09 15:57:59,587 - INFO -   F8_idio     : 54.2% of days gated out
+2026-03-09 15:57:59,592 - INFO - ✅ Alpha signals saved → research/outputs/cache/alpha_signals.parquet (1259 rows × 25 assets)
+2026-03-09 15:57:59,592 - INFO - Alpha signal summary (time-averaged, post-decay-gate):
+2026-03-09 15:57:59,593 - INFO -   VNQ   : +█████ (+0.299)
+2026-03-09 15:57:59,593 - INFO -   LQD   : +█████ (+0.260)
+2026-03-09 15:57:59,593 - INFO -   HYG   : +█████ (+0.249)
+2026-03-09 15:57:59,593 - INFO -   XLI   : +███ (+0.170)
+2026-03-09 15:57:59,593 - INFO -   XLK   : +██ (+0.148)
+2026-03-09 15:57:59,593 - INFO -   XLE   : +██ (+0.143)
+2026-03-09 15:57:59,593 - INFO -   SHV   : +██ (+0.135)
+2026-03-09 15:57:59,593 - INFO -   BIL   : +██ (+0.135)
+2026-03-09 15:57:59,593 - INFO -   PDBC  : +██ (+0.111)
+2026-03-09 15:57:59,593 - INFO -   XLV   : +██ (+0.110)
+2026-03-09 15:57:59,593 - INFO -   USO   : +██ (+0.103)
+2026-03-09 15:57:59,593 - INFO -   EFA   : +██ (+0.101)
+2026-03-09 15:57:59,593 - INFO -   SPY   : +██ (+0.100)
+2026-03-09 15:57:59,593 - INFO -   VTV   : +█ (+0.086)
+2026-03-09 15:57:59,593 - INFO -   EEM   : +█ (+0.070)
+2026-03-09 15:57:59,593 - INFO -   QQQ   : + (+0.044)
+2026-03-09 15:57:59,593 - INFO -   XLP   : + (+0.018)
+2026-03-09 15:57:59,593 - INFO -   XLF   : + (+0.007)
+2026-03-09 15:57:59,593 - INFO -   IWM   : - (-0.045)
+2026-03-09 15:57:59,593 - INFO -   TLT   : -█ (-0.078)
+2026-03-09 15:57:59,593 - INFO -   SLV   : -█ (-0.084)
+2026-03-09 15:57:59,593 - INFO -   IEF   : -█ (-0.096)
+2026-03-09 15:57:59,593 - INFO -   VIXY  : -██ (-0.111)
+2026-03-09 15:57:59,593 - INFO -   GLD   : -██ (-0.146)
+2026-03-09 15:57:59,593 - INFO -   SHY   : -███ (-0.150)
+2026-03-09 15:57:59,593 - INFO - Stage 2 complete (P2: FactorDecayMonitor active). Run run_standalone_backtest.py next.
+[0;32m[OK][0m Stage 2: Alpha Signal Precomputation complete.
+
+[0;36m══════════════════════════════════════════[0m
+[0;36m  Stage 3: Event-Driven Standalone Backtest[0m
+[0;36m══════════════════════════════════════════[0m
+2026-03-09 15:58:00,264 - INFO - ══════ Fortress v5 — Standalone Backtest v5 (BUG #21/#22/#23 FIX) ══════
+2026-03-09 15:58:00,304 - INFO - Loaded | prices:1510d  returns:1510d  regime:1259d  alpha:1259d
+2026-03-09 15:58:00,304 - INFO - Ranges | prices:2019-01-02→2024-12-31  regime:2019-12-31→2024-12-31
+2026-03-09 15:58:00,305 - INFO - ✅ Soft GMM posteriors detected in regime_df — regime-conditional halt thresholds active (BUG #22 FIX).
+2026-03-09 15:58:00,305 - INFO - Backtest window: 2019-07-03 → 2024-12-31 (1384 total days, warmup=126d, recording from 2020-01-02)
+2026-03-09 15:58:03,148 - CRITICAL - HALT triggered 2023-07-11: DD=-21.11% ≤ -20.00% (regime-conditional)
+2026-03-09 15:58:03,157 - INFO - 2023-10-31: Halt recovery — entering ramp-in.
+2026-03-09 15:58:03,208 - WARNING - 2023-11-08: Drawdown=-20.39% exceeded 20.00% during ramp-in. Returning to mandatory BIL.
+2026-03-09 15:58:03,219 - INFO - 2024-03-05: Halt recovery — entering ramp-in.
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:435: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  fx = wrapped_fun(x)
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:439: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  g = append(wrapped_grad(x), 0.0)
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:493: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  a_eq = vstack([con['jac'](x, *con['args'])
+2026-03-09 15:58:03,393 - INFO - 2024-04-30: Ramp-in complete. Resuming full active trading.
+2026-03-09 15:58:03,539 - CRITICAL - HALT triggered 2024-07-26: DD=-20.76% ≤ -20.00% (regime-conditional)
+2026-03-09 15:58:03,548 - INFO - 2024-11-15: Halt recovery — entering ramp-in.
+2026-03-09 15:58:03,626 - WARNING - 2024-11-27: Drawdown=-20.02% exceeded 20.00% during ramp-in. Returning to mandatory BIL.
+2026-03-09 15:58:03,640 - INFO -   CAGR                           +8.16%
+2026-03-09 15:58:03,640 - INFO -   Ann. Volatility                12.26%
+2026-03-09 15:58:03,640 - INFO -   Sharpe Ratio                   0.236
+2026-03-09 15:58:03,640 - INFO -   Sortino Ratio                  0.284
+2026-03-09 15:58:03,640 - INFO -   Calmar Ratio                   0.387
+2026-03-09 15:58:03,640 - INFO -   Max Drawdown                   -21.11%
+2026-03-09 15:58:03,640 - INFO -   Max DD Duration                417 days
+2026-03-09 15:58:03,640 - INFO -   VaR-95 (daily)                 -1.09%
+2026-03-09 15:58:03,640 - INFO -   CVaR-95 (daily)                -1.80%
+2026-03-09 15:58:03,640 - INFO -   Hit Rate                       40.54%
+2026-03-09 15:58:03,640 - INFO -   Avg Daily Turnover             18.94%
+2026-03-09 15:58:03,640 - INFO -   Cost Drag (ann. bps)           129.7
+2026-03-09 15:58:03,640 - INFO -   PSR (SR>0)                     1.0000
+2026-03-09 15:58:03,640 - INFO -   Skewness                       -0.001
+2026-03-09 15:58:03,640 - INFO -   Excess Kurtosis                13.434
+2026-03-09 15:58:03,640 - INFO -   Active Trading %               75.2%
+2026-03-09 15:58:03,640 - INFO -   Halted BIL %                   20.6%
+2026-03-09 15:58:03,640 - INFO -   Ramp-in %                      4.2%
+2026-03-09 15:58:03,640 - INFO -   Final NAV                      $147,959.22
+2026-03-09 15:58:03,640 - INFO -   Trading Days                   1258
+2026-03-09 15:58:03,657 - INFO - ✅ Tearsheet → research/outputs/backtest_tearsheet.csv (1258 rows)
+2026-03-09 15:58:03,657 - INFO - Running walk-forward validation...
+2026-03-09 15:58:03,660 - INFO - Backtest window: 2019-11-29 → 2021-06-30 (399 total days, warmup=21d, recording from 2019-12-31)
+2026-03-09 15:58:04,743 - INFO -   CAGR                           +10.87%
+2026-03-09 15:58:04,743 - INFO -   Ann. Volatility                13.89%
+2026-03-09 15:58:04,743 - INFO -   Sharpe Ratio                   0.432
+2026-03-09 15:58:04,743 - INFO -   Sortino Ratio                  0.663
+2026-03-09 15:58:04,743 - INFO -   Calmar Ratio                   0.773
+2026-03-09 15:58:04,743 - INFO -   Max Drawdown                   -14.06%
+2026-03-09 15:58:04,743 - INFO -   Max DD Duration                158 days
+2026-03-09 15:58:04,743 - INFO -   VaR-95 (daily)                 -1.32%
+2026-03-09 15:58:04,743 - INFO -   CVaR-95 (daily)                -1.87%
+2026-03-09 15:58:04,743 - INFO -   Hit Rate                       51.59%
+2026-03-09 15:58:04,743 - INFO -   Avg Daily Turnover             28.03%
+2026-03-09 15:58:04,743 - INFO -   Cost Drag (ann. bps)           190.4
+2026-03-09 15:58:04,743 - INFO -   PSR (SR>0)                     1.0000
+2026-03-09 15:58:04,743 - INFO -   Skewness                       1.317
+2026-03-09 15:58:04,743 - INFO -   Excess Kurtosis                12.255
+2026-03-09 15:58:04,743 - INFO -   Active Trading %               100.0%
+2026-03-09 15:58:04,743 - INFO -   Halted BIL %                   0.0%
+2026-03-09 15:58:04,743 - INFO -   Ramp-in %                      0.0%
+2026-03-09 15:58:04,744 - INFO -   Final NAV                      $116,743.83
+2026-03-09 15:58:04,744 - INFO -   Trading Days                   378
+2026-03-09 15:58:04,745 - INFO - Backtest window: 2021-06-02 → 2021-12-30 (148 total days, warmup=21d, recording from 2021-07-01)
+2026-03-09 15:58:05,131 - INFO -   CAGR                           +35.20%
+2026-03-09 15:58:05,131 - INFO -   Ann. Volatility                16.12%
+2026-03-09 15:58:05,131 - INFO -   Sharpe Ratio                   1.591
+2026-03-09 15:58:05,131 - INFO -   Sortino Ratio                  2.281
+2026-03-09 15:58:05,131 - INFO -   Calmar Ratio                   8.274
+2026-03-09 15:58:05,131 - INFO -   Max Drawdown                   -4.25%
+2026-03-09 15:58:05,131 - INFO -   Max DD Duration                22 days
+2026-03-09 15:58:05,131 - INFO -   VaR-95 (daily)                 -1.31%
+2026-03-09 15:58:05,131 - INFO -   CVaR-95 (daily)                -2.10%
+2026-03-09 15:58:05,131 - INFO -   Hit Rate                       57.48%
+2026-03-09 15:58:05,131 - INFO -   Avg Daily Turnover             22.23%
+2026-03-09 15:58:05,131 - INFO -   Cost Drag (ann. bps)           153.6
+2026-03-09 15:58:05,131 - INFO -   PSR (SR>0)                     1.0000
+2026-03-09 15:58:05,131 - INFO -   Skewness                       0.132
+2026-03-09 15:58:05,131 - INFO -   Excess Kurtosis                3.486
+2026-03-09 15:58:05,131 - INFO -   Active Trading %               100.0%
+2026-03-09 15:58:05,131 - INFO -   Halted BIL %                   0.0%
+2026-03-09 15:58:05,131 - INFO -   Ramp-in %                      0.0%
+2026-03-09 15:58:05,131 - INFO -   Final NAV                      $116,415.31
+2026-03-09 15:58:05,131 - INFO -   Trading Days                   127
+2026-03-09 15:58:05,133 - INFO -   F1: IS SR=0.432 | OOS SR=1.591  CAGR=35.20%  MaxDD=-4.25%
+2026-03-09 15:58:05,134 - INFO - Backtest window: 2019-11-29 → 2021-12-30 (526 total days, warmup=21d, recording from 2019-12-31)
+2026-03-09 15:58:06,709 - INFO -   CAGR                           +16.24%
+2026-03-09 15:58:06,709 - INFO -   Ann. Volatility                14.50%
+2026-03-09 15:58:06,709 - INFO -   Sharpe Ratio                   0.751
+2026-03-09 15:58:06,709 - INFO -   Sortino Ratio                  1.130
+2026-03-09 15:58:06,709 - INFO -   Calmar Ratio                   1.155
+2026-03-09 15:58:06,709 - INFO -   Max Drawdown                   -14.06%
+2026-03-09 15:58:06,709 - INFO -   Max DD Duration                158 days
+2026-03-09 15:58:06,709 - INFO -   VaR-95 (daily)                 -1.34%
+2026-03-09 15:58:06,709 - INFO -   CVaR-95 (daily)                -1.93%
+2026-03-09 15:58:06,709 - INFO -   Hit Rate                       53.07%
+2026-03-09 15:58:06,709 - INFO -   Avg Daily Turnover             26.37%
+2026-03-09 15:58:06,709 - INFO -   Cost Drag (ann. bps)           180.8
+2026-03-09 15:58:06,709 - INFO -   PSR (SR>0)                     1.0000
+2026-03-09 15:58:06,709 - INFO -   Skewness                       0.930
+2026-03-09 15:58:06,709 - INFO -   Excess Kurtosis                9.076
+2026-03-09 15:58:06,709 - INFO -   Active Trading %               100.0%
+2026-03-09 15:58:06,709 - INFO -   Halted BIL %                   0.0%
+2026-03-09 15:58:06,709 - INFO -   Ramp-in %                      0.0%
+2026-03-09 15:58:06,709 - INFO -   Final NAV                      $135,201.47
+2026-03-09 15:58:06,709 - INFO -   Trading Days                   505
+2026-03-09 15:58:06,711 - INFO - Backtest window: 2021-12-01 → 2022-06-30 (146 total days, warmup=21d, recording from 2021-12-31)
+2026-03-09 15:58:07,048 - INFO -   CAGR                           +35.98%
+2026-03-09 15:58:07,048 - INFO -   Ann. Volatility                13.10%
+2026-03-09 15:58:07,048 - INFO -   Sharpe Ratio                   1.967
+2026-03-09 15:58:07,048 - INFO -   Sortino Ratio                  3.632
+2026-03-09 15:58:07,048 - INFO -   Calmar Ratio                   2.692
+2026-03-09 15:58:07,048 - INFO -   Max Drawdown                   -13.36%
+2026-03-09 15:58:07,049 - INFO -   Max DD Duration                80 days
+2026-03-09 15:58:07,049 - INFO -   VaR-95 (daily)                 -1.24%
+2026-03-09 15:58:07,049 - INFO -   CVaR-95 (daily)                -1.52%
+2026-03-09 15:58:07,049 - INFO -   Hit Rate                       48.80%
+2026-03-09 15:58:07,049 - INFO -   Avg Daily Turnover             14.85%
+2026-03-09 15:58:07,049 - INFO -   Cost Drag (ann. bps)           94.7
+2026-03-09 15:58:07,049 - INFO -   PSR (SR>0)                     1.0000
+2026-03-09 15:58:07,049 - INFO -   Skewness                       0.114
+2026-03-09 15:58:07,049 - INFO -   Excess Kurtosis                -0.364
+2026-03-09 15:58:07,049 - INFO -   Active Trading %               100.0%
+2026-03-09 15:58:07,049 - INFO -   Halted BIL %                   0.0%
+2026-03-09 15:58:07,049 - INFO -   Ramp-in %                      0.0%
+2026-03-09 15:58:07,049 - INFO -   Final NAV                      $116,467.83
+2026-03-09 15:58:07,049 - INFO -   Trading Days                   125
+2026-03-09 15:58:07,051 - INFO -   F2: IS SR=0.751 | OOS SR=1.967  CAGR=35.98%  MaxDD=-13.36%
+2026-03-09 15:58:07,052 - INFO - Backtest window: 2019-11-29 → 2022-06-30 (651 total days, warmup=21d, recording from 2019-12-31)
+2026-03-09 15:58:08,735 - INFO -   CAGR                           +20.04%
+2026-03-09 15:58:08,735 - INFO -   Ann. Volatility                14.24%
+2026-03-09 15:58:08,735 - INFO -   Sharpe Ratio                   0.991
+2026-03-09 15:58:08,735 - INFO -   Sortino Ratio                  1.539
+2026-03-09 15:58:08,735 - INFO -   Calmar Ratio                   1.426
+2026-03-09 15:58:08,735 - INFO -   Max Drawdown                   -14.06%
+2026-03-09 15:58:08,735 - INFO -   Max DD Duration                158 days
+2026-03-09 15:58:08,735 - INFO -   VaR-95 (daily)                 -1.31%
+2026-03-09 15:58:08,735 - INFO -   CVaR-95 (daily)                -1.86%
+2026-03-09 15:58:08,735 - INFO -   Hit Rate                       52.38%
+2026-03-09 15:58:08,735 - INFO -   Avg Daily Turnover             23.95%
+2026-03-09 15:58:08,735 - INFO -   Cost Drag (ann. bps)           163.6
+2026-03-09 15:58:08,735 - INFO -   PSR (SR>0)                     1.0000
+2026-03-09 15:58:08,735 - INFO -   Skewness                       0.795
+2026-03-09 15:58:08,735 - INFO -   Excess Kurtosis                7.737
+2026-03-09 15:58:08,735 - INFO -   Active Trading %               100.0%
+2026-03-09 15:58:08,735 - INFO -   Halted BIL %                   0.0%
+2026-03-09 15:58:08,735 - INFO -   Ramp-in %                      0.0%
+2026-03-09 15:58:08,735 - INFO -   Final NAV                      $157,868.45
+2026-03-09 15:58:08,735 - INFO -   Trading Days                   630
+2026-03-09 15:58:08,738 - INFO - Backtest window: 2022-06-01 → 2022-12-30 (148 total days, warmup=21d, recording from 2022-07-01)
+2026-03-09 15:58:09,058 - INFO -   CAGR                           +1.41%
+2026-03-09 15:58:09,058 - INFO -   Ann. Volatility                9.70%
+2026-03-09 15:58:09,058 - INFO -   Sharpe Ratio                   -0.408
+2026-03-09 15:58:09,058 - INFO -   Sortino Ratio                  -0.653
+2026-03-09 15:58:09,058 - INFO -   Calmar Ratio                   0.293
+2026-03-09 15:58:09,058 - INFO -   Max Drawdown                   -4.83%
+2026-03-09 15:58:09,058 - INFO -   Max DD Duration                52 days
+2026-03-09 15:58:09,058 - INFO -   VaR-95 (daily)                 -1.03%
+2026-03-09 15:58:09,058 - INFO -   CVaR-95 (daily)                -1.25%
+2026-03-09 15:58:09,058 - INFO -   Hit Rate                       51.97%
+2026-03-09 15:58:09,058 - INFO -   Avg Daily Turnover             25.42%
+2026-03-09 15:58:09,058 - INFO -   Cost Drag (ann. bps)           161.3
+2026-03-09 15:58:09,058 - INFO -   PSR (SR>0)                     0.0000
+2026-03-09 15:58:09,058 - INFO -   Skewness                       -0.099
+2026-03-09 15:58:09,058 - INFO -   Excess Kurtosis                -0.045
+2026-03-09 15:58:09,058 - INFO -   Active Trading %               100.0%
+2026-03-09 15:58:09,058 - INFO -   Halted BIL %                   0.0%
+2026-03-09 15:58:09,058 - INFO -   Ramp-in %                      0.0%
+2026-03-09 15:58:09,058 - INFO -   Final NAV                      $100,709.49
+2026-03-09 15:58:09,058 - INFO -   Trading Days                   127
+2026-03-09 15:58:09,060 - INFO -   F3: IS SR=0.991 | OOS SR=-0.408  CAGR=1.41%  MaxDD=-4.83%
+2026-03-09 15:58:09,060 - INFO - Backtest window: 2019-11-29 → 2022-12-30 (778 total days, warmup=21d, recording from 2019-12-31)
+2026-03-09 15:58:11,062 - INFO -   CAGR                           +16.48%
+2026-03-09 15:58:11,062 - INFO -   Ann. Volatility                13.59%
+2026-03-09 15:58:11,062 - INFO -   Sharpe Ratio                   0.812
+2026-03-09 15:58:11,062 - INFO -   Sortino Ratio                  1.265
+2026-03-09 15:58:11,062 - INFO -   Calmar Ratio                   1.173
+2026-03-09 15:58:11,062 - INFO -   Max Drawdown                   -14.06%
+2026-03-09 15:58:11,062 - INFO -   Max DD Duration                200 days
+2026-03-09 15:58:11,062 - INFO -   VaR-95 (daily)                 -1.23%
+2026-03-09 15:58:11,062 - INFO -   CVaR-95 (daily)                -1.79%
+2026-03-09 15:58:11,062 - INFO -   Hit Rate                       52.31%
+2026-03-09 15:58:11,062 - INFO -   Avg Daily Turnover             24.07%
+2026-03-09 15:58:11,062 - INFO -   Cost Drag (ann. bps)           163.9
+2026-03-09 15:58:11,062 - INFO -   PSR (SR>0)                     1.0000
+2026-03-09 15:58:11,062 - INFO -   Skewness                       0.776
+2026-03-09 15:58:11,062 - INFO -   Excess Kurtosis                7.945
+2026-03-09 15:58:11,062 - INFO -   Active Trading %               100.0%
+2026-03-09 15:58:11,062 - INFO -   Halted BIL %                   0.0%
+2026-03-09 15:58:11,062 - INFO -   Ramp-in %                      0.0%
+2026-03-09 15:58:11,062 - INFO -   Final NAV                      $158,136.93
+2026-03-09 15:58:11,062 - INFO -   Trading Days                   757
+2026-03-09 15:58:11,065 - INFO - Backtest window: 2022-12-01 → 2023-06-30 (145 total days, warmup=21d, recording from 2023-01-03)
+2026-03-09 15:58:11,465 - INFO -   CAGR                           +1.24%
+2026-03-09 15:58:11,465 - INFO -   Ann. Volatility                13.01%
+2026-03-09 15:58:11,465 - INFO -   Sharpe Ratio                   -0.290
+2026-03-09 15:58:11,465 - INFO -   Sortino Ratio                  -0.369
+2026-03-09 15:58:11,465 - INFO -   Calmar Ratio                   0.101
+2026-03-09 15:58:11,465 - INFO -   Max Drawdown                   -12.31%
+2026-03-09 15:58:11,465 - INFO -   Max DD Duration                39 days
+2026-03-09 15:58:11,465 - INFO -   VaR-95 (daily)                 -1.11%
+2026-03-09 15:58:11,465 - INFO -   CVaR-95 (daily)                -1.99%
+2026-03-09 15:58:11,465 - INFO -   Hit Rate                       50.00%
+2026-03-09 15:58:11,465 - INFO -   Avg Daily Turnover             30.76%
+2026-03-09 15:58:11,465 - INFO -   Cost Drag (ann. bps)           207.4
+2026-03-09 15:58:11,466 - INFO -   PSR (SR>0)                     0.0004
+2026-03-09 15:58:11,466 - INFO -   Skewness                       -0.719
+2026-03-09 15:58:11,466 - INFO -   Excess Kurtosis                3.150
+2026-03-09 15:58:11,466 - INFO -   Active Trading %               100.0%
+2026-03-09 15:58:11,466 - INFO -   Halted BIL %                   0.0%
+2026-03-09 15:58:11,466 - INFO -   Ramp-in %                      0.0%
+2026-03-09 15:58:11,466 - INFO -   Final NAV                      $100,607.66
+2026-03-09 15:58:11,466 - INFO -   Trading Days                   124
+2026-03-09 15:58:11,468 - INFO -   F4: IS SR=0.812 | OOS SR=-0.290  CAGR=1.24%  MaxDD=-12.31%
+2026-03-09 15:58:11,468 - INFO - Backtest window: 2019-11-29 → 2023-06-30 (902 total days, warmup=21d, recording from 2019-12-31)
+2026-03-09 15:58:13,879 - INFO -   CAGR                           +14.02%
+2026-03-09 15:58:13,879 - INFO -   Ann. Volatility                13.51%
+2026-03-09 15:58:13,879 - INFO -   Sharpe Ratio                   0.660
+2026-03-09 15:58:13,879 - INFO -   Sortino Ratio                  0.996
+2026-03-09 15:58:13,879 - INFO -   Calmar Ratio                   0.998
+2026-03-09 15:58:13,879 - INFO -   Max Drawdown                   -14.06%
+2026-03-09 15:58:13,879 - INFO -   Max DD Duration                200 days
+2026-03-09 15:58:13,879 - INFO -   VaR-95 (daily)                 -1.20%
+2026-03-09 15:58:13,879 - INFO -   CVaR-95 (daily)                -1.82%
+2026-03-09 15:58:13,879 - INFO -   Hit Rate                       51.99%
+2026-03-09 15:58:13,879 - INFO -   Avg Daily Turnover             24.91%
+2026-03-09 15:58:13,879 - INFO -   Cost Drag (ann. bps)           171.3
+2026-03-09 15:58:13,879 - INFO -   PSR (SR>0)                     1.0000
+2026-03-09 15:58:13,879 - INFO -   Skewness                       0.590
+2026-03-09 15:58:13,879 - INFO -   Excess Kurtosis                7.413
+2026-03-09 15:58:13,879 - INFO -   Active Trading %               100.0%
+2026-03-09 15:58:13,879 - INFO -   Halted BIL %                   0.0%
+2026-03-09 15:58:13,879 - INFO -   Ramp-in %                      0.0%
+2026-03-09 15:58:13,879 - INFO -   Final NAV                      $158,213.73
+2026-03-09 15:58:13,879 - INFO -   Trading Days                   881
+2026-03-09 15:58:13,881 - INFO - Backtest window: 2023-06-01 → 2023-12-29 (147 total days, warmup=21d, recording from 2023-07-03)
+2026-03-09 15:58:14,230 - INFO -   CAGR                           -8.46%
+2026-03-09 15:58:14,230 - INFO -   Ann. Volatility                16.50%
+2026-03-09 15:58:14,230 - INFO -   Sharpe Ratio                   -0.806
+2026-03-09 15:58:14,230 - INFO -   Sortino Ratio                  -0.848
+2026-03-09 15:58:14,230 - INFO -   Calmar Ratio                   -0.737
+2026-03-09 15:58:14,230 - INFO -   Max Drawdown                   -11.48%
+2026-03-09 15:58:14,230 - INFO -   Max DD Duration                124 days
+2026-03-09 15:58:14,230 - INFO -   VaR-95 (daily)                 -0.87%
+2026-03-09 15:58:14,230 - INFO -   CVaR-95 (daily)                -2.51%
+2026-03-09 15:58:14,230 - INFO -   Hit Rate                       48.41%
+2026-03-09 15:58:14,230 - INFO -   Avg Daily Turnover             12.52%
+2026-03-09 15:58:14,230 - INFO -   Cost Drag (ann. bps)           86.0
+2026-03-09 15:58:14,230 - INFO -   PSR (SR>0)                     0.0000
+2026-03-09 15:58:14,230 - INFO -   Skewness                       -1.124
+2026-03-09 15:58:14,230 - INFO -   Excess Kurtosis                20.208
+2026-03-09 15:58:14,230 - INFO -   Active Trading %               100.0%
+2026-03-09 15:58:14,230 - INFO -   Halted BIL %                   0.0%
+2026-03-09 15:58:14,230 - INFO -   Ramp-in %                      0.0%
+2026-03-09 15:58:14,230 - INFO -   Final NAV                      $95,676.26
+2026-03-09 15:58:14,230 - INFO -   Trading Days                   126
+2026-03-09 15:58:14,232 - INFO -   F5: IS SR=0.660 | OOS SR=-0.806  CAGR=-8.46%  MaxDD=-11.48%
+2026-03-09 15:58:14,233 - INFO - Backtest window: 2019-11-29 → 2023-12-29 (1028 total days, warmup=21d, recording from 2019-12-31)
+2026-03-09 15:58:16,750 - CRITICAL - HALT triggered 2023-07-11: DD=-21.11% ≤ -20.00% (regime-conditional)
+2026-03-09 15:58:16,762 - INFO - 2023-10-31: Halt recovery — entering ramp-in.
+2026-03-09 15:58:16,816 - WARNING - 2023-11-08: Drawdown=-20.39% exceeded 20.00% during ramp-in. Returning to mandatory BIL.
+2026-03-09 15:58:16,825 - INFO -   CAGR                           +9.68%
+2026-03-09 15:58:16,825 - INFO -   Ann. Volatility                13.48%
+2026-03-09 15:58:16,825 - INFO -   Sharpe Ratio                   0.372
+2026-03-09 15:58:16,825 - INFO -   Sortino Ratio                  0.474
+2026-03-09 15:58:16,825 - INFO -   Calmar Ratio                   0.458
+2026-03-09 15:58:16,825 - INFO -   Max Drawdown                   -21.11%
+2026-03-09 15:58:16,825 - INFO -   Max DD Duration                200 days
+2026-03-09 15:58:16,825 - INFO -   VaR-95 (daily)                 -1.19%
+2026-03-09 15:58:16,825 - INFO -   CVaR-95 (daily)                -1.95%
+2026-03-09 15:58:16,825 - INFO -   Hit Rate                       45.78%
+2026-03-09 15:58:16,825 - INFO -   Avg Daily Turnover             22.00%
+2026-03-09 15:58:16,825 - INFO -   Cost Drag (ann. bps)           151.4
+2026-03-09 15:58:16,825 - INFO -   PSR (SR>0)                     1.0000
+2026-03-09 15:58:16,825 - INFO -   Skewness                       -0.025
+2026-03-09 15:58:16,825 - INFO -   Excess Kurtosis                11.033
+2026-03-09 15:58:16,826 - INFO -   Active Trading %               88.1%
+2026-03-09 15:58:16,826 - INFO -   Halted BIL %                   11.3%
+2026-03-09 15:58:16,826 - INFO -   Ramp-in %                      0.6%
+2026-03-09 15:58:16,826 - INFO -   Final NAV                      $144,634.42
+2026-03-09 15:58:16,826 - INFO -   Trading Days                   1007
+2026-03-09 15:58:16,829 - INFO - Backtest window: 2023-11-30 → 2024-06-28 (145 total days, warmup=21d, recording from 2024-01-02)
+2026-03-09 15:58:17,139 - INFO -   CAGR                           -6.08%
+2026-03-09 15:58:17,139 - INFO -   Ann. Volatility                5.93%
+2026-03-09 15:58:17,139 - INFO -   Sharpe Ratio                   -2.012
+2026-03-09 15:58:17,139 - INFO -   Sortino Ratio                  -3.168
+2026-03-09 15:58:17,139 - INFO -   Calmar Ratio                   -1.436
+2026-03-09 15:58:17,139 - INFO -   Max Drawdown                   -4.23%
+2026-03-09 15:58:17,139 - INFO -   Max DD Duration                115 days
+2026-03-09 15:58:17,140 - INFO -   VaR-95 (daily)                 -0.64%
+2026-03-09 15:58:17,140 - INFO -   CVaR-95 (daily)                -0.81%
+2026-03-09 15:58:17,140 - INFO -   Hit Rate                       42.74%
+2026-03-09 15:58:17,140 - INFO -   Avg Daily Turnover             13.67%
+2026-03-09 15:58:17,140 - INFO -   Cost Drag (ann. bps)           79.4
+2026-03-09 15:58:17,140 - INFO -   PSR (SR>0)                     0.0000
+2026-03-09 15:58:17,140 - INFO -   Skewness                       -0.062
+2026-03-09 15:58:17,140 - INFO -   Excess Kurtosis                -0.041
+2026-03-09 15:58:17,140 - INFO -   Active Trading %               100.0%
+2026-03-09 15:58:17,140 - INFO -   Halted BIL %                   0.0%
+2026-03-09 15:58:17,140 - INFO -   Ramp-in %                      0.0%
+2026-03-09 15:58:17,140 - INFO -   Final NAV                      $96,962.53
+2026-03-09 15:58:17,140 - INFO -   Trading Days                   124
+2026-03-09 15:58:17,142 - INFO -   F6: IS SR=0.372 | OOS SR=-2.012  CAGR=-6.08%  MaxDD=-4.23%
+2026-03-09 15:58:17,142 - INFO - Backtest window: 2019-11-29 → 2024-06-28 (1152 total days, warmup=21d, recording from 2019-12-31)
+2026-03-09 15:58:19,645 - CRITICAL - HALT triggered 2023-07-11: DD=-21.11% ≤ -20.00% (regime-conditional)
+2026-03-09 15:58:19,655 - INFO - 2023-10-31: Halt recovery — entering ramp-in.
+2026-03-09 15:58:19,710 - WARNING - 2023-11-08: Drawdown=-20.39% exceeded 20.00% during ramp-in. Returning to mandatory BIL.
+2026-03-09 15:58:19,719 - INFO - 2024-03-05: Halt recovery — entering ramp-in.
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:435: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  fx = wrapped_fun(x)
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:439: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  g = append(wrapped_grad(x), 0.0)
+/home/alexr/fortress_v5/fortress_env/lib/python3.10/site-packages/scipy/optimize/_slsqp_py.py:493: RuntimeWarning: Values in x were outside bounds during a minimize step, clipping to bounds
+  a_eq = vstack([con['jac'](x, *con['args'])
+2026-03-09 15:58:19,868 - INFO - 2024-04-30: Ramp-in complete. Resuming full active trading.
+2026-03-09 15:58:19,976 - INFO -   CAGR                           +9.06%
+2026-03-09 15:58:19,976 - INFO -   Ann. Volatility                12.83%
+2026-03-09 15:58:19,976 - INFO -   Sharpe Ratio                   0.328
+2026-03-09 15:58:19,976 - INFO -   Sortino Ratio                  0.410
+2026-03-09 15:58:19,976 - INFO -   Calmar Ratio                   0.429
+2026-03-09 15:58:19,976 - INFO -   Max Drawdown                   -21.11%
+2026-03-09 15:58:19,976 - INFO -   Max DD Duration                289 days
+2026-03-09 15:58:19,976 - INFO -   VaR-95 (daily)                 -1.12%
+2026-03-09 15:58:19,977 - INFO -   CVaR-95 (daily)                -1.86%
+2026-03-09 15:58:19,977 - INFO -   Hit Rate                       44.30%
+2026-03-09 15:58:19,977 - INFO -   Avg Daily Turnover             20.71%
+2026-03-09 15:58:19,977 - INFO -   Cost Drag (ann. bps)           141.6
+2026-03-09 15:58:19,977 - INFO -   PSR (SR>0)                     1.0000
+2026-03-09 15:58:19,977 - INFO -   Skewness                       -0.016
+2026-03-09 15:58:19,977 - INFO -   Excess Kurtosis                12.241
+2026-03-09 15:58:19,977 - INFO -   Active Trading %               82.1%
+2026-03-09 15:58:19,977 - INFO -   Halted BIL %                   14.0%
+2026-03-09 15:58:19,977 - INFO -   Ramp-in %                      4.0%
+2026-03-09 15:58:19,977 - INFO -   Final NAV                      $147,586.68
+2026-03-09 15:58:19,977 - INFO -   Trading Days                   1131
+2026-03-09 15:58:19,979 - INFO - Backtest window: 2024-05-30 → 2024-12-30 (148 total days, warmup=21d, recording from 2024-07-01)
+2026-03-09 15:58:20,320 - INFO -   CAGR                           +15.07%
+2026-03-09 15:58:20,320 - INFO -   Ann. Volatility                10.75%
+2026-03-09 15:58:20,320 - INFO -   Sharpe Ratio                   0.818
+2026-03-09 15:58:20,320 - INFO -   Sortino Ratio                  1.285
+2026-03-09 15:58:20,320 - INFO -   Calmar Ratio                   3.070
+2026-03-09 15:58:20,320 - INFO -   Max Drawdown                   -4.91%
+2026-03-09 15:58:20,320 - INFO -   Max DD Duration                47 days
+2026-03-09 15:58:20,320 - INFO -   VaR-95 (daily)                 -1.06%
+2026-03-09 15:58:20,320 - INFO -   CVaR-95 (daily)                -1.34%
+2026-03-09 15:58:20,320 - INFO -   Hit Rate                       51.97%
+2026-03-09 15:58:20,320 - INFO -   Avg Daily Turnover             28.00%
+2026-03-09 15:58:20,320 - INFO -   Cost Drag (ann. bps)           181.2
+2026-03-09 15:58:20,320 - INFO -   PSR (SR>0)                     1.0000
+2026-03-09 15:58:20,320 - INFO -   Skewness                       0.170
+2026-03-09 15:58:20,320 - INFO -   Excess Kurtosis                0.669
+2026-03-09 15:58:20,320 - INFO -   Active Trading %               100.0%
+2026-03-09 15:58:20,320 - INFO -   Halted BIL %                   0.0%
+2026-03-09 15:58:20,320 - INFO -   Ramp-in %                      0.0%
+2026-03-09 15:58:20,320 - INFO -   Final NAV                      $107,330.52
+2026-03-09 15:58:20,320 - INFO -   Trading Days                   127
+2026-03-09 15:58:20,322 - INFO -   F7: IS SR=0.328 | OOS SR=0.818  CAGR=15.07%  MaxDD=-4.91%
+2026-03-09 15:58:20,323 - INFO - WF summary: avg IS=0.621 | avg OOS=0.123 | ⚠️  IS dominated by structural event; OOS signal positive
+2026-03-09 15:58:20,323 - INFO - ✅ Done. Run scripts/visualize_tearsheet.py next.
+[0;32m[OK][0m Stage 3: Event-Driven Standalone Backtest complete.
+
+[0;36m══════════════════════════════════════════[0m
+[0;36m  Stage 4: Tearsheet Visualisation[0m
+[0;36m══════════════════════════════════════════[0m
+2026-03-09 15:58:21,784 - WARNING - Could not load SPY benchmark: If using all scalar values, you must pass an index. Skipping benchmark overlay.
+2026-03-09 15:58:24,810 - INFO - Institutional tear sheet saved to research/outputs/tearsheet.png
+[0;32m[OK][0m Stage 4: Tearsheet Visualisation complete.
+
+[0;32mPipeline complete at Mon Mar  9 15:58:24 CET 2026.[0m
+[INFO] Full log: /home/alexr/fortress_v5/logs/pipeline_20260309_113740.log

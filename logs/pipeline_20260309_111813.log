@@ -1,0 +1,261 @@
+[INFO] Fortress v5 — Backtest Pipeline | Mon Mar  9 11:18:13 CET 2026
+[INFO] Log: /home/alexr/fortress_v5/logs/pipeline_20260309_111813.log
+
+[0;36m══════════════════════════════════════════[0m
+[0;36m  Stage 0: Forensic Data Audit[0m
+[0;36m══════════════════════════════════════════[0m
+2026-03-09 11:18:13,602 - INFO - ══════ Fortress v5 — Forensic Look-Ahead Audit ══════
+2026-03-09 11:18:13,632 - INFO - TimescaleDB reachable. Running institutional look-ahead audit on fortress...
+2026-03-09 11:18:15,420 - INFO - ✅ Macro Hypertable: ZERO look-ahead bias detected.
+2026-03-09 11:18:15,855 - INFO - ✅ Price Hypertable: ZERO look-ahead bias detected.
+2026-03-09 11:18:15,865 - INFO - ✅ TimescaleDB institutional audit complete.
+2026-03-09 11:18:15,865 - INFO - Forensic Audit Passed. ZERO look-ahead violations.
+[0;32m[OK][0m Stage 0: Forensic Data Audit complete.
+
+[0;36m══════════════════════════════════════════[0m
+[0;36m  Stage 1: Regime Posterior Precomputation[0m
+[0;36m══════════════════════════════════════════[0m
+2026-03-09 11:18:16,470 - INFO - ══════ Fortress v5 — Regime Posterior Precomputation ══════
+2026-03-09 11:18:16,470 - INFO - Window: 2019-01-02 → 2024-12-31
+2026-03-09 11:18:16,647 - INFO - Trading calendar: 1510 days
+/home/alexr/fortress_v5/scripts/precompute_regime_posteriors.py:625: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+  model.load_state_dict(torch.load(_WEIGHTS_PATH, map_location=device))
+2026-03-09 11:18:20,999 - INFO - ✅ Mamba-KAN weights loaded from models/weights/mamba_kan_latest.pt. Running Full Mode.
+2026-03-09 11:18:20,999 - INFO - Fetching data from TimescaleDB and running inference for 1510 dates...
+2026-03-09 11:18:21,083 - INFO - TimescaleDB async pool initialised (min=5, max=20).
+2026-03-09 11:18:22,493 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:22,767 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:23,041 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:23,334 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:23,630 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:24,061 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:24,103 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:24,143 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:24,185 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:24,227 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:24,271 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:24,314 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:24,356 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:24,430 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:24,472 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:24,526 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:24,568 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:24,611 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:24,668 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:24,712 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:24,757 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:24,804 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:24,863 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:24,903 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:24,955 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:25,009 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:25,053 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:25,096 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:25,145 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:25,187 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:25,230 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:25,269 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:25,308 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:25,347 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:25,392 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:25,443 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:25,484 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:25,526 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:25,569 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:25,609 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:25,653 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:25,696 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:25,738 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:25,779 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:25,825 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:25,869 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:25,910 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:25,965 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:26,011 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:26,053 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:26,094 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:26,136 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:26,178 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:26,221 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:26,265 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:26,309 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:26,353 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:26,397 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:26,439 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:26,484 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:26,529 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:26,573 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:26,618 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:26,663 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:26,711 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:26,755 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:26,798 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:26,843 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:26,894 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:26,936 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:26,977 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:27,034 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:27,078 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:27,119 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:27,160 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:27,201 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:27,241 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:27,283 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:27,328 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:27,370 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:27,413 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:27,457 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:27,502 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:27,547 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:27,594 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:27,640 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:27,685 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:27,739 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:27,787 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:27,827 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:27,887 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:27,940 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:27,986 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:28,028 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:28,071 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:28,120 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:28,183 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:28,228 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:28,273 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:28,318 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:28,375 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:28,423 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:28,477 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:28,520 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:28,571 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:28,615 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:28,655 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:28,695 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:28,736 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:28,777 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:28,832 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:28,874 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:28,913 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:28,953 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:28,994 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:29,034 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:29,078 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.
+2026-03-09 11:18:29,121 - ERROR - get_observation_vector DB fetch failed: the server expects 0 arguments for this query, 1 was passed
+HINT:  Check the query against the passed list of arguments.  Note that parameters are supported only in SELECT, INSERT, UPDATE, DELETE, MERGE and VALUES statements, and will *not* work in statements  like CREATE VIEW or DECLARE CURSOR.

@@ -1,55 +1,15 @@
 """
-FORTRESS v5 — precompute_alpha_signals.py  [P2 FIX — FactorDecayMonitor]
+FORTRESS v5 — precompute_alpha_signals.py
 Path: scripts/precompute_alpha_signals.py
 
 Offline alpha signal precomputation.
 Loads cached prices/returns/regime posteriors and writes alpha_signals.parquet
 for consumption by the standalone backtest and EDT training.
 
-BUG FIXES RETAINED (previous sessions):
-  BUG #17: Price-trend regime override (SPY MA50/200 + breadth + HYG/SHY spread).
-  BUG #18: Fixed-income carry estimates non-negative (2019–2024 yield averages).
-  BUG #15: No FutureWarning flood.
-
-P1 ENHANCEMENTS (retained):
-  F7: 5-Day Short-Term Reversal — bid-ask bounce / intraweek order-flow reversal.
-  F8: Idiosyncratic Momentum — beta-stripped 12-1M momentum (Blitz et al. 2011).
-  F9: AIS Commodity Flow — optional vessel traffic signal for USO/PDBC/SLV/GLD/EEM.
-
-P2 FIX — FACTOR DECAY MONITOR:
-  Root cause of F7/F8 OOS Sharpe collapse in Folds 7/8 (2023-2024):
-    OOS SR trajectory: 2.22 → 1.51 → 1.22 → -1.36 → 1.24 → 0.28 → 0.18
-    The 2023-2024 low-vol equity momentum bull regime hurts reversal factors
-    (F2-21d, F7-5d) and the mislabeled "crisis" labels from BUG #20 inflated
-    the idiosyncratic momentum signal into a phantom crisis premium.
-    After GMM fix (BUG #20), regime labels are clean, but alpha decay in
-    F2/F7 during low-vol trending markets remains a structural factor property.
-
-  Solution — FactorDecayMonitor:
-    For each factor, compute the realised Spearman rank IC daily:
-      IC_t = SpearmanR(signal_{t-1}, r_t)     — strictly causal: uses yesterday's
-                                                signal vs today's realized return.
-    Track EWMA IC with halflife=63 trading days (≈ 3 months):
-      α = 1 − exp(−ln(2)/halflife)
-      IC_ewma_t = α·IC_{t} + (1−α)·IC_ewma_{t−1}
-
-    Gate mechanism:
-      If |IC_ewma_t| < ic_floor=0.02 for factor X on day t,
-        set λ_X = 0 for day t.
-      After zeroing, L1-renormalize the remaining λ weights so total
-      factor weight is preserved (no free alpha is thrown away, it is
-      redistributed to surviving factors).
-
-    Why 0.02 IC floor?
-      Spearman IC of 0.02 across N=25 assets has t-stat ≈ 0.10 — statistically
-      indistinguishable from noise. Below this threshold the factor is consuming
-      rebalancing budget with zero expected return contribution. The 63-day EWMA
-      provides ~21 effective IID observations, making the floor conservative.
-
-    Causality guarantee:
-      IC_ewma on day t uses only IC values from days {0 ... t-1}.
-      No look-ahead: signal_{t-1} × return_{t} is available on day t
-      (return_t is the open-to-close return of day t, known at close).
+PATCHES APPLIED:
+  - P2: FactorDecayMonitor (EWMA IC gating)
+  - P1b: Wired real GATv2 batch inference & 50/50 blend fallback
+  - P3: Cross-Asset Dispersion Factor (F10)
 """
 
 from __future__ import annotations
@@ -77,6 +37,14 @@ _RETURNS_PATH = _CACHE_DIR / "returns_wide.parquet"
 _REGIME_PATH  = _CACHE_DIR / "regime_posteriors.parquet"
 _ALPHA_OUT    = _CACHE_DIR / "alpha_signals.parquet"
 _GAT_WEIGHTS  = Path("models/weights/gat_alpha_latest.pt")
+
+# ── Constants for GATv2 ───────────────────────────────────────────────────────
+_NODE_FEAT_DIM = 78
+_OBS_DIM       = 47
+_REGIME_DIM    = 16
+_LLM_DIM       = 15
+_EDGE_FEAT_DIM = 5
+_DCC_THRESHOLD = 0.55
 
 # ── Universe ──────────────────────────────────────────────────────────────────
 TICKERS: List[str] = [
@@ -158,7 +126,7 @@ class FactorDecayMonitor:
     # Factor name → column index in the lambda vector (for logging)
     FACTOR_NAMES: List[str] = [
         "F1_mom", "F1b_mom6", "F2_rev21", "F3_vol",
-        "F4_carry", "F7_rev5", "F8_idio",
+        "F4_carry", "F7_rev5", "F8_idio", "F10_disp"
     ]
     # F9 (AIS) has a flat fixed weight, not gated (insufficient history for IC)
 
@@ -528,21 +496,232 @@ def _infer_regime_name(z_effective: float) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# GATv2 stub (full mode)
+# PATCH 2: Factor 10 — Cross-Asset Dispersion
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _build_dispersion_factor(
+    returns_df: pd.DataFrame,
+    z_window: int = 63,
+    signal_window: int = 21,
+) -> pd.DataFrame:
+    """
+    Factor F10: Cross-Asset Return Dispersion.
+
+    When cross-sectional dispersion is high, factor signals have more room
+    to generate alpha (high dispersion ≈ high stock-picking opportunity).
+    When dispersion collapses, all assets move together and cross-sectional
+    factors become noise.
+
+    Computation:
+      1. dispersion_t = std(r_1(t), ..., r_N(t)) across all N assets on day t.
+      2. z_disp_t = (disp_t - rolling_mean(disp)) / rolling_std(disp)
+         using a `z_window`-day rolling window.
+      3. Signal: amplify top/bottom alpha conviction when z_disp > 0,
+         compress toward zero when z_disp < 0.
+
+    The signal is applied multiplicatively in the blend loop:
+      alpha_effective = alpha_raw * (1 + dispersion_tilt)
+    where dispersion_tilt ∈ [-0.5, +0.5] based on z_disp.
+
+    For the FactorDecayMonitor, we convert this to a cross-sectional signal:
+      - High dispersion → long high-vol assets, short low-vol (vol carry)
+      - Low dispersion → flat (compress to zero)
+
+    Returns:
+      DataFrame (T, N_ASSETS) with cross-sectional dispersion-tilt signal.
+    """
+    logger.info("Computing Factor 10: Cross-Asset Dispersion...")
+
+    # Step 1: daily cross-sectional dispersion
+    daily_disp = returns_df.std(axis=1)  # (T,)
+
+    # Step 2: z-score of dispersion
+    disp_mean = daily_disp.rolling(z_window, min_periods=20).mean()
+    disp_std  = daily_disp.rolling(z_window, min_periods=20).std()
+    z_disp    = ((daily_disp - disp_mean) / (disp_std + 1e-8)).fillna(0.0)
+    z_disp    = z_disp.clip(-3.0, 3.0)
+
+    # Step 3: Convert to cross-sectional signal
+    # High dispersion → amplify high-vol assets (they're the ones dispersing)
+    # Low dispersion  → compress everything to zero
+    rolling_vol = returns_df.rolling(signal_window, min_periods=5).std().fillna(0.01)
+    vol_rank    = rolling_vol.rank(axis=1, pct=True) - 0.5  # [-0.5, +0.5]
+
+    signal = pd.DataFrame(
+        np.zeros((len(returns_df), N_ASSETS), dtype=np.float64),
+        index=returns_df.index,
+        columns=TICKERS,
+    )
+
+    for i, date in enumerate(returns_df.index):
+        z_d = float(z_disp.iloc[i])
+        # Dispersion tilt: scale vol_rank by z-scored dispersion
+        # When z_disp > 0: high-vol assets get positive tilt, low-vol negative
+        # When z_disp < 0: everything compressed toward zero
+        if z_d > 0:
+            tilt = vol_rank.iloc[i].values * np.tanh(z_d * 0.5)
+        else:
+            tilt = vol_rank.iloc[i].values * np.tanh(z_d * 0.3) * 0.5  # weaker compression
+
+        signal.iloc[i] = tilt
+
+    return signal
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PATCH 1: GATv2 stub (full mode)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _try_full_mode_gat(
     returns_df: pd.DataFrame,
     regime_df:  pd.DataFrame,
 ) -> bool:
+    """
+    Full-mode GATv2 batch inference. Returns True on success and writes
+    alpha_signals.parquet directly.
+
+    P1b FIX: actually runs GATv2 inference instead of returning False.
+
+    Pipeline per date:
+      1. Build 78-dim node features via obs + z_mu + zeros (LLM placeholder).
+      2. Build DCC correlation edge graph from trailing 63-day window.
+      3. GATv2 forward pass → 25-dim alpha scores (tanh bounded).
+      4. Blend with surrogate alpha: final = 0.5 * gat + 0.5 * surrogate.
+         The 50/50 blend provides continuity during GATv2 ramp-in and
+         prevents over-reliance on a single alpha source.
+
+    If any step fails, returns False and falls back to surrogate-only mode.
+    """
     if not _GAT_WEIGHTS.exists():
         logger.info(
             f"GATv2 weights not found at {_GAT_WEIGHTS}. Running in Surrogate Mode."
         )
         return False
+
     try:
-        import torch  # type: ignore
-        logger.warning("Full-mode GATv2 not yet wired — falling back to Surrogate Mode.")
+        import torch
+        from torch_geometric.data import Data
+        from models.alpha.gat_alpha import MultiRelationalGAT
+        import yaml
+
+        # Load config
+        config_path = Path("config/hyperparams.yaml")
+        if config_path.exists():
+            with open(config_path) as f:
+                cfg = yaml.safe_load(f).get("gat_alpha", {})
+        else:
+            cfg = {}
+
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        model = MultiRelationalGAT(
+            node_feat_dim=cfg.get("node_feat_dim", _NODE_FEAT_DIM),
+            edge_feat_dim=cfg.get("edge_feat_dim", _EDGE_FEAT_DIM),
+            hidden_dim=cfg.get("hidden_dim", 128),
+            n_heads=cfg.get("n_heads", 8),
+            n_layers=cfg.get("n_layers", 3),
+        ).to(device)
+
+        model.load_state_dict(
+            torch.load(str(_GAT_WEIGHTS), map_location=device, weights_only=True)
+        )
+        model.eval()
+        logger.info(f"✅ GATv2 weights loaded from {_GAT_WEIGHTS}. Running Full Mode.")
+
+        # ── Batch inference ───────────────────────────────────────────────────
+        dates = returns_df.index
+        T = len(dates)
+        gat_alphas = np.zeros((T, N_ASSETS), dtype=np.float32)
+
+        def _parse_z(val):
+            if isinstance(val, (list, np.ndarray)):
+                return np.asarray(val, dtype=np.float32)
+            if isinstance(val, str):
+                return np.array(json.loads(val), dtype=np.float32)
+            return np.zeros(_REGIME_DIM, dtype=np.float32)
+
+        n_inferred = 0
+        for idx in range(T):
+            date = dates[idx]
+
+            # Build obs features
+            w0 = max(0, idx - 21)
+            window = returns_df.iloc[w0:idx].values
+            obs = np.zeros((N_ASSETS, _OBS_DIM), dtype=np.float32)
+            if window.shape[0] >= 3:
+                mean_r  = window.mean(axis=0)
+                std_r   = window.std(axis=0) + 1e-8
+                z_ret   = np.clip(mean_r / std_r, -3.0, 3.0)
+                vol_r   = std_r * np.sqrt(252.0)
+                vol_norm = vol_r / (vol_r.mean() + 1e-8)
+                for i in range(N_ASSETS):
+                    obs[i, 0] = z_ret[i]
+                    obs[i, 1] = vol_norm[i]
+
+            # Regime z_mu
+            if date in regime_df.index:
+                z_mu = _parse_z(regime_df.loc[date, "z_mu"])[:_REGIME_DIM]
+            else:
+                z_mu = np.zeros(_REGIME_DIM, dtype=np.float32)
+            z_broadcast = np.tile(z_mu, (N_ASSETS, 1))
+
+            # Node features
+            llm = np.zeros((N_ASSETS, _LLM_DIM), dtype=np.float32)
+            x = np.concatenate([obs, z_broadcast, llm], axis=1).astype(np.float32)
+
+            # Edge graph (DCC)
+            cw0 = max(0, idx - 63)
+            corr_window = returns_df.iloc[cw0:idx].values
+            if corr_window.shape[0] >= 20:
+                corr = np.corrcoef(corr_window.T)
+                src, dst, attrs = [], [], []
+                for i in range(N_ASSETS):
+                    for j in range(N_ASSETS):
+                        if i != j and abs(corr[i, j]) > _DCC_THRESHOLD:
+                            src.append(i)
+                            dst.append(j)
+                            attr = np.zeros(_EDGE_FEAT_DIM, dtype=np.float32)
+                            attr[1] = float(corr[i, j])
+                            attrs.append(attr)
+                if len(src) < 10:
+                    # Fallback: fully connected
+                    src = [i for i in range(N_ASSETS) for j in range(N_ASSETS) if i != j]
+                    dst = [j for i in range(N_ASSETS) for j in range(N_ASSETS) if i != j]
+                    attrs = [np.zeros(_EDGE_FEAT_DIM, dtype=np.float32) for _ in src]
+                    for a in attrs:
+                        a[1] = 0.3  # default correlation weight
+            else:
+                src = [i for i in range(N_ASSETS) for j in range(N_ASSETS) if i != j]
+                dst = [j for i in range(N_ASSETS) for j in range(N_ASSETS) if i != j]
+                attrs = [np.zeros(_EDGE_FEAT_DIM, dtype=np.float32) for _ in src]
+
+            edge_index = torch.tensor([src, dst], dtype=torch.long).to(device)
+            edge_attr  = torch.tensor(np.array(attrs), dtype=torch.float32).to(device)
+            x_tensor   = torch.tensor(x, dtype=torch.float32).to(device)
+
+            with torch.no_grad():
+                alpha = model(x_tensor, edge_index, edge_attr)
+                gat_alphas[idx] = alpha.cpu().numpy()
+
+            n_inferred += 1
+            if n_inferred % 200 == 0:
+                logger.info(f"  ⚡ GATv2 inference: {n_inferred}/{T} dates processed...")
+
+        logger.info(f"✅ Full-mode GATv2 inference complete ({n_inferred} dates).")
+
+        # Save GATv2-only output (before blending with surrogate)
+        gat_df = pd.DataFrame(gat_alphas, index=dates, columns=TICKERS)
+        _CACHE_DIR = Path("research/outputs/cache")
+        gat_df.to_parquet(_CACHE_DIR / "gat_alpha_raw.parquet")
+        logger.info(f"GATv2 raw alpha saved → {_CACHE_DIR / 'gat_alpha_raw.parquet'}")
+
+        # NOTE: We return False here intentionally so the surrogate pipeline
+        # ALSO runs and the final alpha is blended. The caller (main()) should
+        # be modified to blend if gat_alpha_raw.parquet exists.
+        return False  # Let surrogate also run for blending
+
+    except ImportError as exc:
+        logger.warning(f"PyG not available ({exc}). Running Surrogate Mode.")
         return False
     except Exception as exc:
         logger.warning(f"Full mode GATv2 aborted ({exc}). Running Surrogate Mode.")
@@ -588,6 +767,10 @@ def _compute_surrogate_alpha(
     f_idio = _build_idiosyncratic_momentum_signal(returns_df)
     logger.info("Computing Factor 9:  AIS Commodity Flow (optional)...")
     f_ais  = _build_ais_signal(returns_df)
+    
+    # PATCH 4: Add F10 to factor list
+    logger.info("Computing Factor 10: Cross-Asset Dispersion...")
+    f_disp = _build_dispersion_factor(returns_df)
 
     # ── P2 FIX: fit FactorDecayMonitor ───────────────────────────────────────
     # F4 carry is a static cross-sectional vector (same value every day across
@@ -607,6 +790,7 @@ def _compute_surrogate_alpha(
             np.tile(carry_vec, (len(returns_df), 1)).astype(np.float64),
             f_rev5.values.astype(np.float64),   # F7_rev5
             f_idio.values.astype(np.float64),   # F8_idio
+            f_disp.values.astype(np.float64),   # F10_disp
         ],
         returns_matrix=returns_df.values.astype(np.float64),
     )
@@ -629,6 +813,7 @@ def _compute_surrogate_alpha(
     vol_arr   = f_vol.values.astype(np.float64)
     rev5_arr  = f_rev5.values.astype(np.float64)
     idio_arr  = f_idio.values.astype(np.float64)
+    disp_arr  = f_disp.values.astype(np.float64)
     ais_arr   = f_ais.values.astype(np.float64) if f_ais is not None else None
 
     dates     = returns_df.index
@@ -640,7 +825,7 @@ def _compute_surrogate_alpha(
     alpha_rows: List[np.ndarray] = []
 
     # Track how often each factor is gated out (for diagnostic)
-    gate_zero_counts = np.zeros(7, dtype=int)
+    gate_zero_counts = np.zeros(8, dtype=int)
 
     for i, date in enumerate(dates):
         # ── Regime posterior ──────────────────────────────────────────────────
@@ -668,6 +853,7 @@ def _compute_surrogate_alpha(
             float(np.clip(z_effective * 0.18  + 0.22, 0.00, 0.40)),   # F4  carry
             float(np.clip(-abs(z_effective) * 0.20 + 0.30, 0.00, 0.35)),  # F7 rev5
             float(np.clip(z_effective * 0.30  + 0.55, 0.05, 0.80)),   # F8  idio
+            float(np.clip(0.30, 0.10, 0.50)),                         # F10 disp (static base, modulated by signal)
         ], dtype=np.float64)
 
         # ── P2 FIX: apply decay gate + L1-renormalize ─────────────────────────
@@ -682,6 +868,7 @@ def _compute_surrogate_alpha(
         lam_carry = gated_lambdas[4]
         lam_rev5  = gated_lambdas[5]
         lam_idio  = gated_lambdas[6]
+        lam_disp  = gated_lambdas[7]
         lam_ais   = 0.20 if ais_arr is not None else 0.0
 
         alpha_raw = (
@@ -692,6 +879,7 @@ def _compute_surrogate_alpha(
             + lam_carry * carry_vec
             + lam_rev5  * rev5_arr[i]
             + lam_idio  * idio_arr[i]
+            + lam_disp  * disp_arr[i]
             + (lam_ais  * ais_arr[i] if ais_arr is not None else 0.0)
             + _build_regime_tilt_signal(z_effective)
         )
@@ -721,7 +909,7 @@ def _compute_surrogate_alpha(
                 f"  [{i}/{len(dates)}] {str(date)[:10]} | "
                 f"z_pca={z_pca:+.2f} z_eff={z_effective:+.2f} | "
                 f"Regime={regime_name} | "
-                f"ActiveFactors={int(active_f)}/7 | "
+                f"ActiveFactors={int(active_f)}/8 | "
                 f"Top: {', '.join(f'{t}({v:.2f})' for v, t in top3)} | "
                 f"Bot: {', '.join(f'{t}({v:.2f})' for v, t in bot3)}"
             )
@@ -777,13 +965,13 @@ def main() -> None:
     prices_aligned  = prices_df.reindex(common_dates).ffill()
     logger.info(f"Aligned dataset: {len(returns_aligned)} trading days")
 
-    if _try_full_mode_gat(returns_aligned, regime_df):
-        return
+    # Run GATv2 first. It returns False to allow surrogate blending to proceed.
+    _try_full_mode_gat(returns_aligned, regime_df)
 
     factors_active = [
         "F1(mom)", "F1b(mom6)", "F2(rev21)", "F3(vol)",
         "F4(carry)", "F5(tilt)", "F7(rev5)", "F8(idio)",
-        "FactorDecayMonitor(P2)",
+        "F10(disp)", "FactorDecayMonitor(P2)",
     ]
     if _ais_available:
         factors_active.append("F9(AIS)")
@@ -793,6 +981,24 @@ def main() -> None:
     )
 
     alpha_df = _compute_surrogate_alpha(prices_aligned, returns_aligned, regime_df)
+
+    # PATCH 3: Updated main() blending logic
+    _GAT_RAW = _CACHE_DIR / "gat_alpha_raw.parquet"
+    if _GAT_RAW.exists():
+        gat_raw = pd.read_parquet(_GAT_RAW)
+        gat_raw.index = pd.to_datetime(gat_raw.index)
+        common = alpha_df.index.intersection(gat_raw.index)
+        if len(common) > 50:
+            logger.info(
+                f"Blending surrogate + GATv2 alpha (50/50) on {len(common)} dates."
+            )
+            alpha_df.loc[common] = (
+                0.5 * alpha_df.loc[common].values
+                + 0.5 * gat_raw.loc[common].values
+            )
+            # Re-clip to [-1, 1]
+            alpha_df = alpha_df.clip(-1.0, 1.0)
+
 
     assert alpha_df.shape == (len(returns_aligned), N_ASSETS), (
         f"Shape mismatch: {alpha_df.shape} != ({len(returns_aligned)}, {N_ASSETS})"

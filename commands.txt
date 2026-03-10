@@ -12,6 +12,10 @@ git commit -m "INIT: Ouroboros Upgrade fixing"
 git push
 
 set -a; source .env; set +a
+export PYTHONPATH=$(pwd)
+python scripts/download_history.py
+
+set -a; source .env; set +a
 chmod +x run_backtest.sh
 bash run_backtest.sh
 

@@ -1,0 +1,24 @@
+[INFO] Fortress v5 — Backtest Pipeline | Tue Mar 10 13:08:24 CET 2026
+[INFO] Log: /home/alexr/fortress_v5/logs/pipeline_20260310_130824.log
+
+[0;36m══════════════════════════════════════════[0m
+[0;36m  Stage 0: Forensic Data Audit[0m
+[0;36m══════════════════════════════════════════[0m
+2026-03-10 13:08:26,065 - INFO - ══════ Fortress v5 — Forensic Look-Ahead Audit ══════
+2026-03-10 13:08:26,158 - WARNING - TimescaleDB unreachable (localhost/fortress): password authentication failed for user "postgres". Falling back to synthetic parquet audit.
+2026-03-10 13:08:26,158 - INFO - Running synthetic parquet integrity audit...
+2026-03-10 13:08:26,283 - INFO -   Loaded regime_posteriors.parquet: 1,259 rows, 2019-12-31 → 2024-12-31
+2026-03-10 13:08:26,295 - INFO -   Loaded alpha_signals.parquet: 1,259 rows, 2019-12-31 → 2024-12-31
+2026-03-10 13:08:26,311 - INFO -   Loaded prices_wide.parquet: 1,510 rows, 2019-01-02 → 2024-12-31
+2026-03-10 13:08:26,327 - INFO -   Loaded returns_wide.parquet: 1,510 rows, 2019-01-02 → 2024-12-31
+2026-03-10 13:08:26,360 - INFO -   Loaded market_data.parquet: 37,750 rows, 1510 dates × 25 tickers, 2019-01-02 → 2024-12-31  [long-format]
+2026-03-10 13:08:26,378 - INFO - ✅ All cache files are temporally consistent.
+2026-03-10 13:08:26,378 - INFO - Forensic Audit Passed. ZERO look-ahead violations.
+[0;32m[OK][0m Stage 0: Forensic Data Audit complete.
+
+[0;36m══════════════════════════════════════════[0m
+[0;36m  Stage 1: Regime Posterior Precomputation[0m
+[0;36m══════════════════════════════════════════[0m
+2026-03-10 13:08:28,309 - INFO - ══════ Fortress v5 — Regime Posterior Precomputation ══════
+2026-03-10 13:08:28,309 - INFO - Window: 2019-01-02 → 2024-12-31
+2026-03-10 13:08:28,857 - INFO - Trading calendar: 1510 days

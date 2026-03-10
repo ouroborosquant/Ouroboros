@@ -64,6 +64,7 @@ run_stage "Stage 2: Alpha Signal Precomputation" "scripts/precompute_alpha_signa
 
 # ── Stage 3: Backtest ─────────────────────────────────────────────────────────
 run_stage "Stage 3: Event-Driven Standalone Backtest" "scripts/run_standalone_backtest.py"
+run_stage "Stage 3b: CPCV Validation" "scripts/run_cpcv_validation.py"
 
 # ── Stage 4: Verify tearsheet exists before visualising ───────────────────────
 TEARSHEET="${FORTRESS_ROOT}/research/outputs/backtest_tearsheet.csv"

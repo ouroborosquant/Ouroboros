@@ -67,30 +67,187 @@ def _max_drawdown(cum_returns: pd.Series) -> float:
     return float(dd.min())
 
 
+"""
+FORTRESS v5 — patch_visualize_tearsheet.py   [P5 FIX — SPY BENCHMARK]
+Path: scripts/visualize_tearsheet.py
+
+=== PATCH INSTRUCTIONS ===
+Replace the _load_spy_benchmark() function in your existing
+scripts/visualize_tearsheet.py with this version.
+
+Also replace the monthly resample line that uses "M" (deprecated)
+with "ME" (Month End).
+
+=== P5 — SPY BENCHMARK OVERLAY BROKEN ===
+Root cause: yfinance >= 0.2.31 returns a MultiIndex column structure
+  when downloading a single ticker:
+    columns = MultiIndex([('Close', 'SPY'), ('High', 'SPY'), ...])
+
+  Calling spy["Close"].pct_change() on this structure returns a
+  DataFrame (not Series), and when the tearsheet code later tries
+  to construct a cumulative return Series from it, pandas raises:
+    ValueError: If using all scalar values, you must pass an index
+
+Fix:
+  1. Flatten MultiIndex columns after download.
+  2. Handle both old (flat) and new (MultiIndex) yfinance formats.
+  3. Add fallback: construct SPY returns from the prices_wide.parquet
+     cache if "SPY" is in the universe (it is — column index 0).
+  4. Force the returned object to pd.Series with a proper DatetimeIndex.
+  5. Fix the deprecated "M" frequency alias → "ME" (pandas >= 2.2).
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+from pathlib import Path
+from typing import Optional
+
+import numpy as np
+import pandas as pd
+
+logger = logging.getLogger("TearsheetGen")
+
+_CACHE_DIR = Path("research/outputs/cache")
+_SPY_CSV   = "research/outputs/spy_benchmark.csv"
+
+
 def _load_spy_benchmark(
     start: str, end: str, csv_path: str = _SPY_CSV
 ) -> Optional[pd.Series]:
     """
-    Loads SPY benchmark returns. If the CSV is missing, attempts to download
-    from Yahoo Finance via yfinance. Returns None gracefully if unavailable.
-    """
-    if os.path.exists(csv_path):
-        df = pd.read_csv(csv_path, index_col=0, parse_dates=True)
-        if "daily_return" in df.columns:
-            return df["daily_return"].loc[start:end]
+    Loads SPY benchmark daily returns as a pd.Series with DatetimeIndex.
 
+    Resolution order:
+      1. Local CSV cache (research/outputs/spy_benchmark.csv).
+      2. yfinance download (handles both old and new column formats).
+      3. Cached prices_wide.parquet (SPY is asset #0 in the universe).
+      4. Returns None gracefully if all methods fail.
+
+    P5 FIX: Handles yfinance MultiIndex columns and ensures output is
+    always a pd.Series (not DataFrame), preventing the "scalar values"
+    ValueError in downstream cumulative return computation.
+    """
+    # ── Method 1: Local CSV cache ─────────────────────────────────────────────
+    if os.path.exists(csv_path):
+        try:
+            df = pd.read_csv(csv_path, index_col=0, parse_dates=True)
+            if "daily_return" in df.columns:
+                ret = df["daily_return"].loc[start:end]
+                if len(ret) > 10:
+                    logger.info(f"SPY benchmark loaded from {csv_path}.")
+                    return ret
+        except Exception as exc:
+            logger.debug(f"CSV cache load failed: {exc}")
+
+    # ── Method 2: yfinance download ───────────────────────────────────────────
     try:
         import yfinance as yf
+
         spy = yf.download("SPY", start=start, end=end, progress=False)
-        daily_ret = spy["Close"].pct_change().dropna()
+
+        if spy.empty:
+            raise ValueError("yfinance returned empty DataFrame for SPY.")
+
+        # P5 FIX: Handle MultiIndex columns (yfinance >= 0.2.31)
+        # Old format: columns = ['Open', 'High', 'Low', 'Close', 'Volume', 'Adj Close']
+        # New format: columns = MultiIndex([('Close', 'SPY'), ('High', 'SPY'), ...])
+        if isinstance(spy.columns, pd.MultiIndex):
+            # Flatten: take just the first level
+            spy.columns = spy.columns.get_level_values(0)
+
+        # Prefer 'Adj Close' if available (split/dividend adjusted), else 'Close'
+        if "Adj Close" in spy.columns:
+            close_col = "Adj Close"
+        elif "Close" in spy.columns:
+            close_col = "Close"
+        else:
+            raise ValueError(f"No Close column found. Columns: {spy.columns.tolist()}")
+
+        # P5 FIX: Force to Series (not DataFrame with 1 column)
+        close_series = spy[close_col]
+        if isinstance(close_series, pd.DataFrame):
+            close_series = close_series.iloc[:, 0]
+
+        daily_ret = close_series.pct_change().dropna()
+
+        # Ensure proper DatetimeIndex
+        daily_ret.index = pd.to_datetime(daily_ret.index)
+        if daily_ret.index.tz is not None:
+            daily_ret.index = daily_ret.index.tz_localize(None)
+
+        daily_ret.name = "daily_return"
+
+        # Cache for next run
         spy_df = pd.DataFrame({"daily_return": daily_ret})
         os.makedirs(os.path.dirname(csv_path), exist_ok=True)
         spy_df.to_csv(csv_path)
-        logger.info("SPY benchmark downloaded via yfinance.")
+        logger.info("SPY benchmark downloaded via yfinance and cached.")
         return daily_ret.loc[start:end]
+
+    except ImportError:
+        logger.debug("yfinance not installed. Trying cache fallback.")
     except Exception as exc:
-        logger.warning(f"Could not load SPY benchmark: {exc}. Skipping benchmark overlay.")
-        return None
+        logger.debug(f"yfinance download failed: {exc}. Trying cache fallback.")
+
+    # ── Method 3: Construct from prices_wide.parquet ──────────────────────────
+    try:
+        prices_path = _CACHE_DIR / "prices_wide.parquet"
+        if prices_path.exists():
+            prices_df = pd.read_parquet(prices_path)
+            prices_df.index = pd.to_datetime(prices_df.index)
+            if prices_df.index.tz is not None:
+                prices_df.index = prices_df.index.tz_localize(None)
+
+            # Find SPY column (could be 'SPY' or 'price_SPY' or column index 0)
+            spy_col = None
+            for candidate in ["SPY", "price_SPY"]:
+                if candidate in prices_df.columns:
+                    spy_col = candidate
+                    break
+            if spy_col is None and prices_df.shape[1] > 0:
+                # Universe order: SPY is index 0
+                spy_col = prices_df.columns[0]
+                logger.debug(f"Assuming first column '{spy_col}' is SPY.")
+
+            if spy_col is not None:
+                spy_prices = prices_df[spy_col].dropna()
+                daily_ret = spy_prices.pct_change().dropna()
+                daily_ret.name = "daily_return"
+
+                # Cache
+                spy_df = pd.DataFrame({"daily_return": daily_ret})
+                os.makedirs(os.path.dirname(csv_path), exist_ok=True)
+                spy_df.to_csv(csv_path)
+                logger.info(
+                    f"SPY benchmark constructed from {prices_path} "
+                    f"(column: {spy_col})."
+                )
+                return daily_ret.loc[start:end]
+
+    except Exception as exc:
+        logger.debug(f"Parquet fallback failed: {exc}")
+
+    # ── All methods exhausted ─────────────────────────────────────────────────
+    logger.warning(
+        "Could not load SPY benchmark from any source. "
+        "Skipping benchmark overlay."
+    )
+    return None
+
+
+# ==============================================================================
+# ADDITIONAL FIX: Monthly resample frequency alias
+# ==============================================================================
+# In the generate_tearsheet() function, replace:
+#     monthly = returns.resample("M").apply(lambda r: (1 + r).prod() - 1)
+# with:
+#     monthly = returns.resample("ME").apply(lambda r: (1 + r).prod() - 1)
+#
+# pandas >= 2.2 deprecated "M" (ambiguous month anchor) in favour of "ME"
+# (month-end). The old alias still works but raises FutureWarning.
+# ==============================================================================
 
 
 def generate_tearsheet(

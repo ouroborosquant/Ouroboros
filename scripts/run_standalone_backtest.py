@@ -105,13 +105,13 @@ TIER_MAX_WEIGHT: Dict[str, float] = {
 _INITIAL_CAPITAL:       float = 100_000.0
 _RISK_FREE_ANNUAL:      float = 0.05
 _HALT_RECOVERY_THRESH:  float = 0.10
-_HALT_MIN_DAYS:         int   = 60
-_HALT_RAMP_DAYS:        int   = 60
+_HALT_MIN_DAYS:  int = 21   # 1 month: enough for regime confirmation
+_HALT_RAMP_DAYS: int = 21   # 1 month ramp: sufficient for transaction spreading
 _WARMUP_DAYS:           int   = 126
 _WF_WARMUP_DAYS:        int   = 21
-_REBALANCE_BAND:        float = 25e-4   # 25bps
+_REBALANCE_BAND: float = 75e-4   # 75bps, up from 25bps
 _LAMBDA_BASE:           float = 2.5
-_COV_WINDOW:            int   = 63
+_COV_WINDOW: int = 126   # Up from 63 — more stable CVaR estimates
 _MIN_POSITION_WT:       float = 0.015
 _EMA_SPAN:              int   = 8
 _REGIME_PERSIST_DAYS:   int   = 5
@@ -542,7 +542,7 @@ class Snap:
     regime_label: str
     z_mu_0: float
     drawdown: float
-    halt_phase: int
+    alloc_pct: int
 
 
 @dataclass
@@ -580,6 +580,8 @@ class StandaloneBacktester:
         self._ramp_entry_nav: float = _INITIAL_CAPITAL
         self._smoother = RegimeSignalSmoother()
         self._prev_weights = np.zeros(N_ASSETS, dtype=np.float64)
+        self._prev_dd:     float = 0.0
+        self._prev_dd_vel: float = 0.0
 
     def _current_weights(self, px: np.ndarray) -> np.ndarray:
         """Mark-to-market weight vector."""
@@ -622,18 +624,24 @@ class StandaloneBacktester:
     ) -> Tuple[float, float]:
         current = self._current_weights(px)
         delta   = target - current
+        
+        # ── THE COST SQUEEZE: 5% Turnover Threshold ───────────────────────────
+        if not force and np.sum(np.abs(delta)) < 0.10:
+            return 0.0, 0.0
+
         cost    = 0.0
 
         for i, t in enumerate(TICKERS):
             if not force and abs(delta[i]) < _REBALANCE_BAND:
                 continue
             dol    = delta[i] * self.nav
+            # ... [rest of the function stays the same]
             shares = dol / (px[i] + 1e-10)
             c      = abs(dol) * (
                 _ac_cost_bps(shares, vol[i], adv[i]) + _BASE_SPREAD_BPS
             ) / 10_000
             cost       += c
-            self.cash  += -(dol + np.sign(dol) * c)
+            self.cash += -dol - c
             self.pos[t]  = self.pos.get(t, 0.0) + shares
 
         cost_drag_frac = cost / (self.nav + 1e-10)
@@ -713,14 +721,13 @@ class StandaloneBacktester:
             # ══════════════════════════════════════════════════════════════════
             # HALT STATE MACHINE — BUG #24 FIX
             # ══════════════════════════════════════════════════════════════════
+            # AFTER (fixed):
             if self._halt_phase >= 1:
                 self._halt_days += 1
-                dr = self._rf_step()
-
-                # Global drawdown from all-time peak (for Phase 1 monitoring)
-                dd_from_peak = (self.nav - self._peak) / self._peak
+                dd_from_peak = (self.nav - self._peak) / self._peak if self._peak > 0 else 0.0
 
                 if self._halt_phase == 1:
+                    dr = self._mtm(px)  # Mark-to-market BIL/SHV at actual prices. No synthetic compounding.
                     # Phase 1: mandatory BIL — check minimum days + recovery
                     if self._halt_days >= halt_days_req:
                         recov = (self.nav - self._halt_nav) / (self._halt_nav + 1e-10)
@@ -747,12 +754,20 @@ class StandaloneBacktester:
                     alp = alpha_df.loc[date].values.astype(np.float64)
 
                     # BUG #25 FIX: pass return window for CVaR estimation
+                    # BUG #25 FIX: pass return window for CVaR estimation
                     ret_window = returns_df.iloc[max(0, gi - _COV_WINDOW) : gi].values
+                    
+                    # FIX: Remove alloc_scale from the optimizer so it solves for 100%
                     target = _mvo_weights(
                         alp, cov_d, z0, vol_d,
-                        alloc_scale=scale,
                         return_window=ret_window if ret_window.shape[0] >= 30 else None,
                     )
+                    
+                    # FIX: Manually apply the ramp-in scale, and put the uninvested cash in BIL/SHV
+                    target = target * scale
+                    target[TICKERS.index("BIL")] += (1.0 - scale) * 0.60
+                    target[TICKERS.index("SHV")] += (1.0 - scale) * 0.40
+
                     cost_d, to = self._rebalance(target, px, vol_d, adv)
                     dr = self._mtm(px)
 
@@ -782,8 +797,8 @@ class StandaloneBacktester:
                         self._halt_nav   = self.nav
                         self._liquidate(px)
                         self._invest_bil(px)
-
-                    if self._ramp_days >= ramp_days_req:
+                    
+                    elif self._ramp_days >= ramp_days_req:
                         logger.info(f"{ds}: Ramp-in complete. Resuming full active trading.")
                         self._halt_phase = 0
                         # BUG #24 FIX: Reset peak to current NAV on ramp-in
@@ -819,7 +834,13 @@ class StandaloneBacktester:
                 .std(axis=0).fillna(0.01).values.astype(np.float64)
             )
             adv = np.maximum(10_000_000.0 / (px + 1e-10), 1.0)
-            alp = alpha_df.loc[date].values.astype(np.float64)
+            
+            # --- REGIME-CONDITIONAL ALPHA SCALING ---
+            row = regime_df.loc[date]
+            crisis_weight = float(row.get("soft_crisis", 0.0)) + float(row.get("soft_bear", 0.0))
+            alpha_scale   = 1.0 - 0.6 * crisis_weight   # Attenuate alpha by up to 60% in deep crisis
+            alp = alpha_df.loc[date].values.astype(np.float64) * alpha_scale
+            # ----------------------------------------
 
             # BUG #25 FIX: pass return window for CVaR estimation
             ret_window = returns_df.iloc[max(0, gi - _COV_WINDOW) : gi].values
@@ -828,28 +849,69 @@ class StandaloneBacktester:
                 return_window=ret_window if ret_window.shape[0] >= 30 else None,
             )
 
+            # --- INSERT RISK TIERS HERE ---
+            dd = (self.nav - self._peak) / self._peak if self._peak > 0 else 0.0
+
+            dd_vel = dd - self._prev_dd
+            dd_accel = dd_vel - self._prev_dd_vel
+            
+            self._prev_dd = dd
+            self._prev_dd_vel = dd_vel
+
+            # 2. Tighten threshold on rapid crash (negative accel), loosen on slow grind
+            velocity_adj = float(np.clip(dd_accel / 0.001, -0.05, 0.05))
+            
+            # 3. Dynamically adjusted Risk Tiers
+            _RISK_TIERS = [
+                (0.22 + velocity_adj, 0.00),   # DD <= -22% (adjusted) → 0% allocation
+                (0.18 + velocity_adj, 0.15),   # DD <= -18% (adjusted) → 15% allocation
+                (0.13 + velocity_adj, 0.40),   # DD <= -13% (adjusted) → 40% allocation
+                (0.08 + velocity_adj, 0.70),   # DD <= -8%  (adjusted) → 70% allocation
+            ]
+            
+            scale = 1.0
+            for dd_thresh, alloc in _RISK_TIERS:
+                if dd <= -dd_thresh:
+                    scale = alloc
+                    break
+
+            # --- BUG 1 FIX: FORMAL HALT TRIGGER ---
+            if scale == 0.0 and self._halt_phase == 0:
+                logger.critical(f"HALT triggered {ds}: DD={dd:.2%} exceeds tier-0 threshold")
+                self._halt_phase = 1
+                self._halt_days  = 0
+                self._halt_nav   = self.nav
+                self._liquidate(px)
+                self._invest_bil(px)
+                dr = self._mtm(px)
+                if record:
+                    self.history.append(Snap(ds, self.nav, dr, self.cash, 0.0, 0.0, "HALTED_BIL", z0, dd, 0))
+                continue  # Skip active trading today
+            # --------------------------------------
+                    
+            # Apply the tier scale to the portfolio weights
+            target = target * scale
+            target[TICKERS.index("BIL")] += (1.0 - scale) * 0.60
+            target[TICKERS.index("SHV")] += (1.0 - scale) * 0.40
+            # ------------------------------
+
             regime_changed = s_label != self._prev_regime
             cost_d, to = self._rebalance(
                 target, px, vol_d, adv, force=regime_changed
             )
             dr = self._mtm(px)
-            dd = (self.nav - self._peak) / self._peak
+            
+            # Instantly update peak to allow smooth scaling back up
+            if self.nav > self._peak:
+                self._peak = self.nav
+                
             self._prev_regime = s_label
 
-            if dd <= -halt_dd_thresh:
-                logger.critical(
-                    f"HALT triggered {ds}: DD={dd:.2%} ≤ "
-                    f"-{halt_dd_thresh:.2%} (regime-conditional)"
-                )
-                self._liquidate(px)
-                self._halt_phase = 1
-                self._halt_days  = 0
-                self._halt_nav   = self.nav
-                self._invest_bil(px)
+            # (The old 'if dd <= -halt_dd_thresh:' block is completely deleted)
 
             if record:
                 self.history.append(
-                    Snap(ds, self.nav, dr, self.cash, to, cost_d, s_label, z0, dd, 0)
+                    Snap(ds, self.nav, dr, self.cash, to, cost_d, s_label, z0, dd, int(scale*100))
                 )
 
         active_days = sum(
@@ -879,7 +941,7 @@ class StandaloneBacktester:
                 "regime_label":    h.regime_label,
                 "z_mu_0":          h.z_mu_0,
                 "drawdown":        h.drawdown,
-                "halt_phase":      h.halt_phase,
+                "alloc_pct":      h.alloc_pct,
             }
             for h in self.history
         ])
@@ -922,12 +984,9 @@ class StandaloneBacktester:
         kurt_raw = float(stats.kurtosis(r, fisher=False))
         psr      = _psr(sr, n, skew, kurt_raw)
 
-        active_pct = float((
-            ~df["regime_label"].isin(["WARMUP", "NO_SIGNAL", "HALTED_BIL"])
-            & ~df["regime_label"].str.startswith("RAMP")
-        ).mean())
-        halt_pct = float(df["regime_label"].isin(["HALTED_BIL"]).mean())
-        ramp_pct = float(df["regime_label"].str.startswith("RAMP").mean())
+        # Track time spent at different allocation scales
+        active_pct = float((df["alloc_pct"] >= 70).mean())
+        halt_pct = float((df["alloc_pct"] == 0).mean())
 
         m = {
             "CAGR":                    f"{cagr:+.2%}",
@@ -947,7 +1006,6 @@ class StandaloneBacktester:
             "Excess Kurtosis":         f"{kurt_raw - 3:.3f}",
             "Active Trading %":        f"{active_pct:.1%}",
             "Halted BIL %":            f"{halt_pct:.1%}",
-            "Ramp-in %":               f"{ramp_pct:.1%}",
             "Final NAV":               f"${df['portfolio_value'].iloc[-1]:,.2f}",
             "Trading Days":            str(n),
         }

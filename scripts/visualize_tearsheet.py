@@ -97,8 +97,6 @@ Fix:
   5. Fix the deprecated "M" frequency alias → "ME" (pandas >= 2.2).
 """
 
-from __future__ import annotations
-
 import logging
 import os
 from pathlib import Path

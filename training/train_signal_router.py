@@ -237,8 +237,8 @@ def compute_sensitivity_betas(
     rate_betas = np.zeros((T, N_ASSETS), dtype=np.float32)
 
     returns_np  = returns_df.reindex(columns=TICKERS).values
-    vol_np      = vol_returns.reindex(returns_df.index).fillna(0).values
-    rate_np     = rate_returns.reindex(returns_df.index).fillna(0).values
+    vol_np      = vol_returns.reindex(returns_df.index).fillna(0).values.ravel()
+    rate_np     = rate_returns.reindex(returns_df.index).fillna(0).values.ravel()
 
     for t in range(window, T):
         r_window    = returns_np[t - window : t]  # (W, N)
@@ -298,9 +298,13 @@ def run_training(
 
     # Build valid training indices (exclude last ic_window rows — no forward IC)
     T          = len(returns_df)
-    valid_mask = ~np.any(np.isnan(ic_tensor), axis=(1, 2))  # (T,) — True where IC is valid
-    valid_idx  = np.where(valid_mask)[0]
-    valid_idx  = valid_idx[valid_idx > _IC_HIST_WINDOW]  # need history for node features
+    
+    # BUG FIX: Convert NaN ICs to 0.0. A flat signal (like NAV Arb on SPY) 
+    # has 0 predictive power. We cannot throw away the entire day!
+    np.nan_to_num(ic_tensor, nan=0.0, copy=False)
+    
+    # Valid dates: Must have enough history for features, and enough future for targets
+    valid_idx  = np.arange(_IC_HIST_WINDOW + 1, T - _IC_WINDOW)
 
     # Purged train/val split
     n_val    = max(int(len(valid_idx) * _VAL_FRACTION), 30)
@@ -529,7 +533,7 @@ async def main() -> None:
     logger.info("Computing sensitivity betas...")
     loop = asyncio.get_event_loop()
     vix_proxy = await loop.run_in_executor(
-        None, lambda: yf.download("^VIX", start="2015-01-01", progress=False)["Close"].pct_change()
+        None, lambda: yf.download("^VIX", start="2015-01-01", progress=False)["Close"].squeeze().pct_change()
     )
     vol_betas, rate_betas = compute_sensitivity_betas(
         returns_df,

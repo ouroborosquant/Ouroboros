@@ -1070,7 +1070,7 @@ def main() -> None:
     prices_df  = _normalize_index(pd.read_parquet(_CACHE_DIR / "prices_wide.parquet"))
     returns_df = _normalize_index(pd.read_parquet(_CACHE_DIR / "returns_wide.parquet"))
     regime_df  = _normalize_index(pd.read_parquet(_CACHE_DIR / "regime_posteriors.parquet"))
-    alpha_df   = _normalize_index(pd.read_parquet(_CACHE_DIR / "alpha_signals.parquet"))
+    alpha_df   = _normalize_index(pd.read_parquet(_CACHE_DIR / "alpha_signals_blended.parquet"))
 
     logger.info(
         f"Loaded | prices:{len(prices_df)}d  returns:{len(returns_df)}d  "

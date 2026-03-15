@@ -135,26 +135,23 @@ async def stage0_vol_regime(start: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
 # Stage 1: Options surface signals
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def stage1_options_alpha(start: str) -> pd.DataFrame:
+async def stage1_options_alpha(start: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Compute VRP, IV/HV ratio, and VTS term structure signals.
-    Uses CBOE vol indices for settlement-grade IV (no proxy needed for SPY/QQQ/IWM/GLD/USO).
-
-    Returns:
-      options_df: (T, N) — options-surface composite alpha per ticker
+    Compute VRP and VTS term structure signals as separate matrices.
+    Vectorized for O(T) performance.
     """
     from signals.options_alpha import OptionsAlphaEngine
 
     logger.info("Stage 1: Options surface alpha (CBOE vol indices)...")
     engine = OptionsAlphaEngine()
-    await engine.load_data(start=start)
-
-    options_df = engine.compute_full_history()
-    logger.info(
-        f"  ✓ Options alpha: {len(options_df)} days × {len(options_df.columns)} assets | "
-        f"Mean |signal|: {options_df.abs().mean().mean():.3f}"
-    )
-    return options_df
+    await engine.load_data(start=start)  # <-- precomputes internally
+    
+    vrp_df = engine.compute_vrp_history()
+    vts_df = engine.compute_vts_history()
+    stats  = engine.get_signal_summary()
+    
+    logger.info(f"  ✓ VRP: mean|α|={stats.get('vrp_mean_abs', 0):.3f} | VTS: mean|α|={stats.get('vts_mean_abs', 0):.3f}")
+    return vrp_df, vts_df
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -597,13 +594,14 @@ async def main() -> None:
         f"Start: {start_date} | End: {str(dates[-1].date())}"
     )
 
-    # ── Stage 0: Regime ────────────────────────────────────────────────────────
+# ── Stage 0: Regime ────────────────────────────────────────────────────────
     regime_df, regime_meta = await stage0_vol_regime(start=start_date)
     regime_df.index = pd.to_datetime(regime_df.index)
 
     # ── Stage 1: Options surface ───────────────────────────────────────────────
-    options_df = await stage1_options_alpha(start=start_date)
-    options_df.index = pd.to_datetime(options_df.index)
+    vrp_df, vts_df = await stage1_options_alpha(start=start_date)
+    vrp_df.index = pd.to_datetime(vrp_df.index)
+    vts_df.index = pd.to_datetime(vts_df.index)
 
     # ── Stage 2: ETF NAV / AP stress ──────────────────────────────────────────
     nav_df, stress_meta = await stage2_nav_arb(start=start_date)
@@ -620,8 +618,8 @@ async def main() -> None:
     # ── Save per-signal matrices ───────────────────────────────────────────────
     # Long format: columns = {signal_name}_{ticker}
     signal_dfs: Dict[str, pd.DataFrame] = {
-        "vrp":     options_df,   # VRP from options engine (also contains VTS)
-        "vts":     options_df,   # Same engine, different components — router separates
+        "vrp":     vrp_df,       # Now completely independent!
+        "vts":     vts_df,       # Now completely independent!
         "nav_arb": nav_df,
         "insider": insider_df,
         "low_vol": lowvol_df,
@@ -646,6 +644,13 @@ async def main() -> None:
         returns_df=returns_df,
         dates=dates,
     )
+
+    # --- BUG FIX: Catch and fill any NaNs from the warmup period ---
+    n_nans = alpha_df.isnull().sum().sum()
+    if n_nans > 0:
+        logger.warning(f"Caught {n_nans} NaN values in final alpha (warmup). Filling with 0.0")
+        alpha_df = alpha_df.fillna(0.0)
+    # ---------------------------------------------------------------
 
     # Validate output
     assert alpha_df.shape == (len(dates), N_ASSETS), \

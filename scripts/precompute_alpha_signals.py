@@ -1,19 +1,60 @@
 """
-FORTRESS v5 — precompute_alpha_signals.py
-Path: scripts/precompute_alpha_signals.py
+FORTRESS v5 - scripts/precompute_alpha_signals.py
+Path: scripts/precompute_alpha_signals.py  [COMPLETE REWRITE]
 
-Offline alpha signal precomputation.
-Loads cached prices/returns/regime posteriors and writes alpha_signals.parquet
-for consumption by the standalone backtest and EDT training.
+4-Layer Alpha Signal Precomputation with Signal Router Integration.
 
-PATCHES APPLIED:
-  - P2: FactorDecayMonitor (EWMA IC gating)
-  - P1b: Wired real GATv2 batch inference & 50/50 blend fallback
-  - P3: Cross-Asset Dispersion Factor (F10)
+PIPELINE STAGES:
+  Stage 0: Multi-asset vol regime construction (replaces Mamba-KAN z_mu)
+  Stage 1: Options surface signals (VRP, IV/HV ratio, term structure)
+  Stage 2: ETF NAV/AP stress signal (bond/commodity ETFs only)
+  Stage 3: SEC filing intelligence (IWM insider + activist sector signals)
+  Stage 4: Low-vol anomaly (baseline factor, always-on with low weight)
+  Stage 5: Signal Router (GATv2 IC predictor) — if weights exist
+           Fallback: EWMA-IC weighted blend (no GATv2)
+
+OUTPUT FORMAT:
+  alpha_signals.parquet:    (T, N×S) — raw per-signal per-ticker alpha vectors
+                            Columns: {signal_name}_{ticker}
+                            Used by train_signal_router.py as training input.
+
+  alpha_blended.parquet:    (T, N) — final blended alpha via GATv2 signal router
+                            Columns: {ticker}
+                            Consumed by research/backtest_engine.py
+
+  regime_posteriors.parquet: (T, *) — Multi-asset VolRegimeTensor posteriors
+                              Replaces Mamba-KAN output as regime signal.
+
+  signal_metadata.parquet:  (T, *) — AP stress indicators, IC statistics, debug
+
+ARCHITECTURAL CHANGES vs prior version:
+  REMOVED:
+    - 8-factor surrogate (momentum, reversal, carry, tilt)
+    - FactorDecayMonitor gating (replaced by GATv2 IC prediction)
+    - z_mu from Mamba-KAN (replaced by VolRegimeTensor)
+    - VIX × vol_beta IV proxy (replaced by CBOE vol indices + yfinance chains)
+
+  ADDED:
+    - MultiAssetVolRegime (VIX/MOVE/GVZ/OVX four-axis regime tensor)
+    - OptionsAlphaEngine (real CBOE IV, VRP, skew, term structure)
+    - ETFNavArbSignal (AP capacity stress, stress-gated)
+    - SECFilingIntelligence (IWM insider + activist sector signals)
+    - LowVolAnomaly (retained as baseline — low weight)
+    - SignalRouterGAT (GATv2 predicting forward IC per signal per asset)
+
+LOOK-AHEAD CONTRACT:
+  All signals use strictly causal computation: rolling windows, EWMA, and
+  SEC filing dates use only data available at as_of_date.
+  Forward IC computation in train_signal_router.py uses forward data only
+  as TRAINING TARGETS — never as features. This contract is enforced by
+  the separate computation of ic_tensor (target) vs ewma_ic_history (feature).
+
+RUN:
+  PYTHONPATH=. python scripts/precompute_alpha_signals.py
 """
-
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import sys
@@ -22,999 +63,602 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-from scipy.stats import spearmanr
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
+    format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
 )
 logger = logging.getLogger("PrecomputeAlpha")
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
-_CACHE_DIR    = Path("research/outputs/cache")
-_PRICES_PATH  = _CACHE_DIR / "prices_wide.parquet"
-_RETURNS_PATH = _CACHE_DIR / "returns_wide.parquet"
-_REGIME_PATH  = _CACHE_DIR / "regime_posteriors.parquet"
-_ALPHA_OUT    = _CACHE_DIR / "alpha_signals.parquet"
-_GAT_WEIGHTS  = Path("models/weights/gat_alpha_latest.pt")
+# ── Paths ──────────────────────────────────────────────────────────────────────
+_BASE_DIR      = Path(".")
+_CACHE_DIR     = _BASE_DIR / "research" / "outputs" / "cache"
+_WEIGHTS_DIR   = _BASE_DIR / "models" / "weights"
 
-# ── Constants for GATv2 ───────────────────────────────────────────────────────
-_NODE_FEAT_DIM = 78
-_OBS_DIM       = 47
-_REGIME_DIM    = 16
-_LLM_DIM       = 15
-_EDGE_FEAT_DIM = 5
-_DCC_THRESHOLD = 0.55
+_PRICES_PATH   = _CACHE_DIR / "prices_wide.parquet"
+_RETURNS_PATH  = _CACHE_DIR / "returns_wide.parquet"
 
-# ── Universe ──────────────────────────────────────────────────────────────────
+# Output paths
+_REGIME_OUT    = _CACHE_DIR / "regime_posteriors.parquet"
+_SIGNALS_OUT   = _CACHE_DIR / "alpha_signals.parquet"     # per-signal per-ticker
+_ALPHA_OUT     = _CACHE_DIR / "alpha_signals_blended.parquet"  # final blended
+_META_OUT      = _CACHE_DIR / "signal_metadata.parquet"
+
+_ROUTER_WEIGHTS = _WEIGHTS_DIR / "signal_router_latest.pt"
+
+_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+_WEIGHTS_DIR.mkdir(parents=True, exist_ok=True)
+
 TICKERS: List[str] = [
-    "SPY", "QQQ", "IWM", "VTV",
-    "XLK", "XLF", "XLV", "XLP", "XLI", "XLE",
-    "EFA", "EEM",
-    "TLT", "IEF", "SHY", "LQD", "HYG",
-    "GLD", "SLV", "USO", "PDBC", "VNQ",
-    "VIXY",
-    "SHV", "BIL",
+    "SPY", "QQQ", "IWM", "TLT", "HYG", "LQD", "GLD", "SLV",
+    "GDX", "XLE", "XLF", "XLK", "XLV", "XLU", "XLI", "XLP",
+    "XLY", "XLB", "XLC", "VIXY", "BIL", "SHV", "USO", "PDBC", "COWZ",
 ]
-N_ASSETS           = len(TICKERS)
-DEFENSIVE_TICKERS  = {"TLT", "IEF", "SHY", "GLD", "SHV", "BIL"}
-EQUITY_TICKERS     = {
-    "SPY", "QQQ", "IWM", "VTV",
-    "XLK", "XLF", "XLV", "XLP", "XLI", "XLE",
-    "EFA", "EEM", "VNQ", "HYG",
-}
-VOLATILITY_TICKERS = {"VIXY"}
-
-# ── P1-AIS: attempt to import AIS pipeline (graceful degradation) ─────────────
-_ais_available: bool = False
-try:
-    from data.alt_data.ais_pipeline import AISCommoditySignal as _AISCommoditySignal  # type: ignore
-    _ais_available = True
-    logger.info("✅ AIS commodity flow pipeline loaded. Factor F9 active.")
-except ImportError:
-    logger.info(
-        "AIS pipeline not available — Factor F9 inactive. "
-        "Wire data/alt_data/ais_pipeline.py to activate."
-    )
-
-_AIS_TICKERS: List[str]     = ["USO", "PDBC", "SLV", "GLD", "EEM"]
-_AIS_TICKER_IDXS: List[int] = [TICKERS.index(t) for t in _AIS_TICKERS]
-
-# ── Fixed-Income Carry Estimates ──────────────────────────────────────────────
-# BUG #18 FIX: all non-negative. 2019-2024 Barclays yield-to-worst averages.
-CARRY_ESTIMATES: Dict[str, float] = {
-    "TLT":  0.025, "IEF": 0.018, "SHY": 0.025,
-    "LQD":  0.032, "HYG": 0.055, "SHV": 0.035, "BIL": 0.035,
-}
-
-# ── FactorDecayMonitor parameters (P2 FIX) ───────────────────────────────────
-_IC_EWMA_HALFLIFE: int   = 63    # ~3 months. α = 1 − exp(−ln2/63) ≈ 0.0109
-_IC_FLOOR:         float = 0.02  # Below this → factor is statistical noise
-_IC_EWMA_ALPHA:    float = 1.0 - np.exp(-np.log(2) / _IC_EWMA_HALFLIFE)
+N_ASSETS  = len(TICKERS)
+SIGNAL_NAMES: List[str] = ["vrp", "vts", "nav_arb", "insider", "low_vol"]
+N_SIGNALS = len(SIGNAL_NAMES)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# P2 FIX: FactorDecayMonitor
+# Stage 0: Multi-asset vol regime
 # ─────────────────────────────────────────────────────────────────────────────
 
-class FactorDecayMonitor:
+async def stage0_vol_regime(start: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Tracks realised Spearman IC for each factor and gates lambda weights.
-
-    Architecture:
-      - Pre-computes per-factor IC time series once over the full dataset.
-        IC_t = SpearmanR(signal_{t-1}, returns_t) — causal by one period.
-      - Applies EWMA(halflife=63d) to produce IC_ewma(t) using only
-        IC values from periods {0 ... t-1} (strict causality).
-      - Returns per-day lambda multipliers in {0, 1}: 1 if |IC_ewma| ≥ floor,
-        0 otherwise.
-
-    Lambda gating + L1 renormalization:
-      After zeroing decayed factors, the surviving lambda vector is scaled
-      so it sums to the same total as the original (factor budget is preserved,
-      not reduced). This prevents the optimizer from going to cash just because
-      one factor is decayed — it concentrates the budget in surviving factors.
-
-    Example IC lifecycle:
-      F7 (5d reversal) IC in a low-vol trending bull market:
-        2019-2021: IC_ewma ≈ +0.04 → active
-        2023 H2:   IC_ewma decays below 0.02 as momentum dominates → zeroed
-        2024:      remains below floor → budget shifts to F1/F8
-      This precisely captures the observed F7/F8 OOS collapse in Folds 7/8.
-    """
-
-    # Factor name → column index in the lambda vector (for logging)
-    FACTOR_NAMES: List[str] = [
-        "F1_mom", "F1b_mom6", "F2_rev21", "F3_vol",
-        "F4_carry", "F7_rev5", "F8_idio", "F10_disp"
-    ]
-    # F9 (AIS) has a flat fixed weight, not gated (insufficient history for IC)
-
-    def __init__(self) -> None:
-        # n_factors × T pre-computed IC grid (filled in fit())
-        self._ic_grid:      Optional[np.ndarray] = None  # (n_factors, T)
-        self._ic_ewma_grid: Optional[np.ndarray] = None  # (n_factors, T)
-        self._n_factors:    int = len(self.FACTOR_NAMES)
-
-    def fit(
-        self,
-        factor_arrays:  List[np.ndarray],  # each (T, N), ordered per FACTOR_NAMES
-        returns_matrix: np.ndarray,        # (T, N) daily returns
-    ) -> None:
-        """
-        Pre-computes IC_t and IC_ewma_t for every factor and day.
-
-        IC_t = SpearmanR(factor[t-1, :], returns[t, :]) across N assets.
-        EWMA applied causally: IC_ewma[t] uses IC[0..t-1] only.
-
-        O(T × n_factors × N log N) — runs in <0.5s for T=1510, N=25.
-        """
-        T, N = returns_matrix.shape
-        n_f  = len(factor_arrays)
-        assert n_f == self._n_factors, (
-            f"Expected {self._n_factors} factor arrays, got {n_f}"
-        )
-
-        ic_grid      = np.zeros((n_f, T), dtype=np.float64)
-        ic_ewma_grid = np.zeros((n_f, T), dtype=np.float64)
-
-        for fi, arr in enumerate(factor_arrays):
-            ewma_val = 0.0
-            for t in range(1, T):
-                sig_t1 = arr[t - 1]     # yesterday's signal — strictly causal
-                ret_t  = returns_matrix[t]
-
-                # Mask NaN/zero rows
-                valid = np.isfinite(sig_t1) & np.isfinite(ret_t)
-                if valid.sum() >= 5:
-                    ic_t, _ = spearmanr(sig_t1[valid], ret_t[valid])
-                    if not np.isfinite(ic_t):
-                        ic_t = 0.0
-                else:
-                    ic_t = 0.0
-
-                ic_grid[fi, t] = ic_t
-
-                # EWMA is computed using IC values from {0..t-1}:
-                # ic_ewma_grid[t] reflects information available on day t
-                # because IC_t = IC(signal_{t-1}, return_t) is only known
-                # at close of day t. For day t's decision, we use ewma_{t-1}.
-                # Convention: ewma_grid[t] = ewma state ENTERING day t.
-                ewma_val = _IC_EWMA_ALPHA * ic_t + (1.0 - _IC_EWMA_ALPHA) * ewma_val
-                ic_ewma_grid[fi, t] = ewma_val
-
-        self._ic_grid      = ic_grid
-        self._ic_ewma_grid = ic_ewma_grid
-
-        # Log end-of-series IC for diagnostic
-        logger.info("FactorDecayMonitor fit complete. Terminal EWMA IC per factor:")
-        for fi, name in enumerate(self.FACTOR_NAMES):
-            terminal_ic = ic_ewma_grid[fi, -1]
-            status = "✅ ACTIVE" if abs(terminal_ic) >= _IC_FLOOR else "❌ DECAYED"
-            logger.info(f"  {name:12s}: IC_ewma(T) = {terminal_ic:+.4f}  [{status}]")
-
-    def get_lambda_multipliers(self, t: int) -> np.ndarray:
-        """
-        Returns (n_factors,) binary gate vector for day t.
-        1.0 → factor active, 0.0 → factor decayed below IC floor.
-
-        Uses ic_ewma_grid[:, t] which was built from IC values {0..t-1},
-        so it is strictly causal for day t's allocation decision.
-        """
-        if self._ic_ewma_grid is None:
-            return np.ones(self._n_factors, dtype=np.float64)
-
-        ewma_t = self._ic_ewma_grid[:, t]
-        return np.where(np.abs(ewma_t) >= _IC_FLOOR, 1.0, 0.0)
-
-    @staticmethod
-    def renormalize_lambdas(
-        raw_lambdas: np.ndarray,   # (n_factors,) before gating
-        gate:        np.ndarray,   # (n_factors,) binary multipliers
-    ) -> np.ndarray:
-        """
-        L1-renormalize: scale surviving lambdas so their sum equals
-        the original total lambda budget. Budget preservation prevents
-        the optimizer from implicitly going to cash on decayed signals.
-
-        Edge case: if all factors are gated out (all zero), returns
-        equal-weight surviving lambdas to prevent zero-alpha days.
-        """
-        gated    = raw_lambdas * gate
-        raw_sum  = raw_lambdas.sum()
-        gated_sum = gated.sum()
-
-        if gated_sum < 1e-9:
-            # All factors decayed: distribute budget equally (shouldn't happen
-            # in practice — at least F1/momentum is rarely below floor)
-            n_raw_active = int((raw_lambdas > 0).sum())
-            if n_raw_active == 0:
-                return raw_lambdas.copy()
-            equal_lam    = raw_sum / n_raw_active
-            return np.where(raw_lambdas > 0, equal_lam, 0.0)
-
-        # Scale so surviving factors absorb the decayed budget
-        return gated * (raw_sum / gated_sum)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Utilities
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _cross_sectional_rank(arr: np.ndarray, descending: bool = True) -> np.ndarray:
-    """Signal vector → cross-sectional percentile ranks in [−1, 1]. NaN → 0."""
-    valid = ~np.isnan(arr)
-    ranks = np.zeros(len(arr), dtype=np.float64)
-    if valid.sum() < 2:
-        return ranks
-    n_valid = int(valid.sum())
-    temp = np.argsort(arr[valid])
-    r    = (temp.argsort() + 1).astype(np.float64)
-    r    = (r - (n_valid + 1) / 2.0) / ((n_valid - 1) / 2.0 + 1e-8)
-    if descending:
-        r = -r
-    ranks[valid] = r
-    return ranks
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Factor 1: 12-1 Month Cross-Sectional Momentum
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _build_momentum_signal(
-    returns_df: pd.DataFrame,
-    momentum_window: int = 252,
-    skip_window:     int = 21,
-) -> pd.DataFrame:
-    cum_long = returns_df.rolling(momentum_window, min_periods=60).sum()
-    cum_skip = returns_df.rolling(skip_window,     min_periods=5).sum()
-    signal   = (cum_long - cum_skip).fillna(0.0).values
-    ranked   = np.apply_along_axis(
-        lambda row: _cross_sectional_rank(row, descending=False),
-        axis=1, arr=signal,
-    )
-    return pd.DataFrame(ranked, index=returns_df.index, columns=TICKERS)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Factor 1b: 6-1 Month Momentum
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _build_momentum_6m_signal(
-    returns_df:  pd.DataFrame,
-    window:      int = 126,
-    skip_window: int = 21,
-) -> pd.DataFrame:
-    """6-1M — faster regime-transition capture than 12-1M."""
-    cum_long = returns_df.rolling(window,       min_periods=30).sum()
-    cum_skip = returns_df.rolling(skip_window,  min_periods=5).sum()
-    signal   = (cum_long - cum_skip).fillna(0.0).values
-    ranked   = np.apply_along_axis(
-        lambda row: _cross_sectional_rank(row, descending=False),
-        axis=1, arr=signal,
-    )
-    return pd.DataFrame(ranked, index=returns_df.index, columns=TICKERS)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Factor 2: 21-Day Short-Term Reversal
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _build_reversal_signal(
-    returns_df: pd.DataFrame,
-    window:     int = 21,
-) -> pd.DataFrame:
-    cum    = returns_df.rolling(window, min_periods=5).sum().fillna(0.0).values
-    ranked = np.apply_along_axis(
-        lambda row: _cross_sectional_rank(row, descending=True),
-        axis=1, arr=cum,
-    )
-    return pd.DataFrame(ranked, index=returns_df.index, columns=TICKERS)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Factor 3: 63-Day Low-Volatility Anomaly
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _build_vol_signal(
-    returns_df: pd.DataFrame,
-    window:     int = 63,
-) -> pd.DataFrame:
-    vol    = returns_df.rolling(window, min_periods=21).std().fillna(0.1).values
-    ranked = np.apply_along_axis(
-        lambda row: _cross_sectional_rank(row, descending=True),
-        axis=1, arr=vol,
-    )
-    return pd.DataFrame(ranked, index=returns_df.index, columns=TICKERS)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Factor 4: Fixed-Income Carry
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _build_carry_signal() -> Dict[str, float]:
-    """BUG #18 FIX: non-negative estimates from 2019-2024 Barclays YTW averages."""
-    return {t: CARRY_ESTIMATES.get(t, 0.0) for t in TICKERS}
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Factor 5: Price-Trend Regime Override (BUG #17 FIX)
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _price_trend_z(
-    prices_arr:  np.ndarray,
-    i:           int,
-    fast_window: int = 50,
-    slow_window: int = 200,
-) -> float:
-    """
-    Three-component price trend signal (strictly causal):
-      (1) SPY 50/200d MA crossover  — weight 50%
-      (2) Cross-asset breadth: % above 50d MA  — weight 30%
-      (3) HYG vs SHY 21d momentum spread  — weight 20%
-    """
-    if i < slow_window:
-        return 0.0
-    px = prices_arr[:i]
-    if len(px) < slow_window:
-        return 0.0
-
-    spy_idx = TICKERS.index("SPY")
-    hyg_idx = TICKERS.index("HYG")
-    shy_idx = TICKERS.index("SHY")
-
-    spy_window = px[-slow_window:, spy_idx]
-    ma_fast    = float(spy_window[-fast_window:].mean())
-    ma_slow    = float(spy_window.mean())
-    trend_z    = float(np.clip((ma_fast / (ma_slow + 1e-8) - 1.0) * 50.0, -2.0, 2.0))
-
-    px_recent  = px[-fast_window:]
-    ma50_all   = px_recent.mean(axis=0)
-    breadth_z  = float(np.clip(((px[-1] > ma50_all).mean() - 0.5) * 6.0, -2.0, 2.0))
-
-    credit_z = 0.0
-    if i >= 22:
-        hyg_ret  = float(px[-1, hyg_idx] / (px[-21, hyg_idx] + 1e-8) - 1.0)
-        shy_ret  = float(px[-1, shy_idx] / (px[-21, shy_idx] + 1e-8) - 1.0)
-        credit_z = float(np.clip((hyg_ret - shy_ret) * 25.0, -1.0, 1.0))
-
-    return float(np.clip(0.50 * trend_z + 0.30 * breadth_z + 0.20 * credit_z, -2.0, 2.0))
-
-
-def _build_regime_tilt_signal(z_effective: float) -> np.ndarray:
-    """Additive tilt vector conditioned on blended z_effective regime signal."""
-    tilt = np.zeros(N_ASSETS, dtype=np.float64)
-    for i, t in enumerate(TICKERS):
-        if t in EQUITY_TICKERS:
-            tilt[i] = z_effective * 0.65
-        elif t in DEFENSIVE_TICKERS:
-            tilt[i] = -z_effective * 0.55
-        elif t in VOLATILITY_TICKERS:
-            tilt[i] = -z_effective * 1.20
-    return tilt
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Factor 7: 5-Day Short-Term Reversal
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _build_reversal_5d_signal(returns_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    5-day mean-reversion: bid-ask bounce + intraweek order-flow reversal.
-    Orthogonal to 21d reversal in autocorrelation structure.
-    5d IC ≈ −0.04 to −0.08 in ETF universe; stronger in USO/VIXY due to roll.
-    """
-    cum    = returns_df.rolling(5, min_periods=3).sum().fillna(0.0).values
-    ranked = np.apply_along_axis(
-        lambda row: _cross_sectional_rank(row, descending=True),
-        axis=1, arr=cum,
-    )
-    return pd.DataFrame(ranked, index=returns_df.index, columns=TICKERS)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Factor 8: Idiosyncratic Momentum
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _build_idiosyncratic_momentum_signal(
-    returns_df:      pd.DataFrame,
-    beta_window:     int = 63,
-    momentum_window: int = 252,
-    skip_window:     int = 21,
-) -> pd.DataFrame:
-    """
-    Beta-adjusted 12-1M momentum (Blitz et al. 2011).
-    Removes market component before momentum:
-      β_i(t) = cov(r_i[t−63:t], r_SPY[t−63:t]) / var(r_SPY[t−63:t])
-      r_idio_i(t) = r_i(t) − β_i(t) × r_SPY(t)
-    Reduces momentum-crash exposure vs raw momentum. IC ≈ 0.05 vs 0.03 raw.
-    """
-    if "SPY" not in returns_df.columns:
-        logger.warning("SPY absent — idiosyncratic momentum unavailable. Returning zeros.")
-        return pd.DataFrame(
-            np.zeros((len(returns_df), N_ASSETS), dtype=np.float64),
-            index=returns_df.index, columns=TICKERS,
-        )
-
-    spy_series   = returns_df["SPY"]
-    spy_var      = spy_series.rolling(beta_window, min_periods=20).var()
-    spy_returns  = spy_series.values.astype(np.float64)
-    n_dates      = len(returns_df)
-    idio_returns = np.zeros((n_dates, N_ASSETS), dtype=np.float64)
-
-    for col_idx, ticker in enumerate(TICKERS):
-        asset_series = returns_df[ticker]
-        cov_series   = asset_series.rolling(beta_window, min_periods=20).cov(spy_series)
-        beta_series  = (cov_series / spy_var.clip(lower=1e-10)).fillna(1.0)
-        idio_returns[:, col_idx] = asset_series.values - beta_series.values * spy_returns
-
-    idio_df   = pd.DataFrame(idio_returns, index=returns_df.index, columns=TICKERS)
-    cum_long  = idio_df.rolling(momentum_window, min_periods=60).sum()
-    cum_skip  = idio_df.rolling(skip_window,     min_periods=5).sum()
-    signal    = (cum_long - cum_skip).fillna(0.0).values
-
-    ranked = np.apply_along_axis(
-        lambda row: _cross_sectional_rank(row, descending=False),
-        axis=1, arr=signal,
-    )
-    return pd.DataFrame(ranked, index=returns_df.index, columns=TICKERS)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Factor 9: AIS Commodity Flow (optional)
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _build_ais_signal(returns_df: pd.DataFrame) -> Optional[pd.DataFrame]:
-    if not _ais_available:
-        return None
-    try:
-        ais_signal = _AISCommoditySignal()  # type: ignore[name-defined]
-        flow_df    = ais_signal.load_precomputed_scores(
-            start_date=str(returns_df.index[0].date()),
-            end_date=str(returns_df.index[-1].date()),
-        )
-        result = pd.DataFrame(
-            np.zeros((len(returns_df), N_ASSETS), dtype=np.float64),
-            index=returns_df.index, columns=TICKERS,
-        )
-        for ticker in _AIS_TICKERS:
-            if ticker in flow_df.columns:
-                result[ticker] = flow_df[ticker].reindex(returns_df.index).fillna(0.0).values
-        logger.info(f"AIS signal loaded: {flow_df.shape} → aligned to {result.shape}")
-        return result
-    except Exception as exc:
-        logger.warning(f"AIS signal load failed ({exc}). Degrading to zero.")
-        return None
-
-
-def _infer_regime_name(z_effective: float) -> str:
-    if   z_effective >  1.5: return "bull_low_vol"
-    elif z_effective >  0.5: return "bull_high_vol"
-    elif z_effective > -0.5: return "neutral"
-    elif z_effective > -1.5: return "bear_market"
-    else:                    return "crisis"
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# PATCH 2: Factor 10 — Cross-Asset Dispersion
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _build_dispersion_factor(
-    returns_df: pd.DataFrame,
-    z_window: int = 63,
-    signal_window: int = 21,
-) -> pd.DataFrame:
-    """
-    Factor F10: Cross-Asset Return Dispersion.
-
-    When cross-sectional dispersion is high, factor signals have more room
-    to generate alpha (high dispersion ≈ high stock-picking opportunity).
-    When dispersion collapses, all assets move together and cross-sectional
-    factors become noise.
-
-    Computation:
-      1. dispersion_t = std(r_1(t), ..., r_N(t)) across all N assets on day t.
-      2. z_disp_t = (disp_t - rolling_mean(disp)) / rolling_std(disp)
-         using a `z_window`-day rolling window.
-      3. Signal: amplify top/bottom alpha conviction when z_disp > 0,
-         compress toward zero when z_disp < 0.
-
-    The signal is applied multiplicatively in the blend loop:
-      alpha_effective = alpha_raw * (1 + dispersion_tilt)
-    where dispersion_tilt ∈ [-0.5, +0.5] based on z_disp.
-
-    For the FactorDecayMonitor, we convert this to a cross-sectional signal:
-      - High dispersion → long high-vol assets, short low-vol (vol carry)
-      - Low dispersion → flat (compress to zero)
+    Compute multi-asset vol regime tensor for the full history.
+    Replaces Mamba-KAN regime_posteriors.parquet.
 
     Returns:
-      DataFrame (T, N_ASSETS) with cross-sectional dispersion-tilt signal.
+      regime_df:  (T, *) z_mu/z_sigma/tda_alert/ltc_urgency/regime_label
+      meta_df:    (T, *) per-axis labels and urgencies (for diagnostics)
     """
-    logger.info("Computing Factor 10: Cross-Asset Dispersion...")
+    from signals.vol_regime import MultiAssetVolRegime
 
-    # Step 1: daily cross-sectional dispersion
-    daily_disp = returns_df.std(axis=1)  # (T,)
+    logger.info("Stage 0: Multi-asset vol regime construction...")
+    regime_engine = MultiAssetVolRegime()
+    await regime_engine.load_history(start=start)
 
-    # Step 2: z-score of dispersion
-    disp_mean = daily_disp.rolling(z_window, min_periods=20).mean()
-    disp_std  = daily_disp.rolling(z_window, min_periods=20).std()
-    z_disp    = ((daily_disp - disp_mean) / (disp_std + 1e-8)).fillna(0.0)
-    z_disp    = z_disp.clip(-3.0, 3.0)
+    regime_df, meta_df = regime_engine.get_tensor_series(tickers=TICKERS)
+    regime_df.to_parquet(_REGIME_OUT)
+    logger.info(f"  ✓ Regime posteriors → {_REGIME_OUT} ({len(regime_df)} rows)")
 
-    # Step 3: Convert to cross-sectional signal
-    # High dispersion → amplify high-vol assets (they're the ones dispersing)
-    # Low dispersion  → compress everything to zero
-    rolling_vol = returns_df.rolling(signal_window, min_periods=5).std().fillna(0.01)
-    vol_rank    = rolling_vol.rank(axis=1, pct=True) - 0.5  # [-0.5, +0.5]
+    # Log regime distribution
+    if "equity_label" in meta_df.columns:
+        for label in ["crisis", "stress", "neutral", "complacent"]:
+            pct = (meta_df["equity_label"] == label).mean() * 100
+            logger.info(f"  Equity regime [{label}]: {pct:.1f}% of days")
 
-    signal = pd.DataFrame(
-        np.zeros((len(returns_df), N_ASSETS), dtype=np.float64),
-        index=returns_df.index,
-        columns=TICKERS,
+    return regime_df, meta_df
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stage 1: Options surface signals
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def stage1_options_alpha(start: str) -> pd.DataFrame:
+    """
+    Compute VRP, IV/HV ratio, and VTS term structure signals.
+    Uses CBOE vol indices for settlement-grade IV (no proxy needed for SPY/QQQ/IWM/GLD/USO).
+
+    Returns:
+      options_df: (T, N) — options-surface composite alpha per ticker
+    """
+    from signals.options_alpha import OptionsAlphaEngine
+
+    logger.info("Stage 1: Options surface alpha (CBOE vol indices)...")
+    engine = OptionsAlphaEngine()
+    await engine.load_data(start=start)
+
+    options_df = engine.compute_full_history()
+    logger.info(
+        f"  ✓ Options alpha: {len(options_df)} days × {len(options_df.columns)} assets | "
+        f"Mean |signal|: {options_df.abs().mean().mean():.3f}"
     )
-
-    for i, date in enumerate(returns_df.index):
-        z_d = float(z_disp.iloc[i])
-        # Dispersion tilt: scale vol_rank by z-scored dispersion
-        # When z_disp > 0: high-vol assets get positive tilt, low-vol negative
-        # When z_disp < 0: everything compressed toward zero
-        if z_d > 0:
-            tilt = vol_rank.iloc[i].values * np.tanh(z_d * 0.5)
-        else:
-            tilt = vol_rank.iloc[i].values * np.tanh(z_d * 0.3) * 0.5  # weaker compression
-
-        signal.iloc[i] = tilt
-
-    return signal
+    return options_df
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PATCH 1: GATv2 stub (full mode)
+# Stage 2: ETF NAV/AP stress signal
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _try_full_mode_gat(
-    returns_df: pd.DataFrame,
-    regime_df:  pd.DataFrame,
-) -> bool:
+async def stage2_nav_arb(start: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Full-mode GATv2 batch inference. Returns True on success and writes
-    alpha_signals.parquet directly.
+    Compute AP capacity stress signal for bond and commodity ETFs.
+    Signal is zero unless AP stress conditions are met — this is correct.
+    A sparse signal that fires 5-10% of trading days is not a bug; it's the
+    mechanism correctly refusing to trade when there is no edge.
 
-    P1b FIX: actually runs GATv2 inference instead of returning False.
-
-    Pipeline per date:
-      1. Build 78-dim node features via obs + z_mu + zeros (LLM placeholder).
-      2. Build DCC correlation edge graph from trailing 63-day window.
-      3. GATv2 forward pass → 25-dim alpha scores (tanh bounded).
-      4. Blend with surrogate alpha: final = 0.5 * gat + 0.5 * surrogate.
-         The 50/50 blend provides continuity during GATv2 ramp-in and
-         prevents over-reliance on a single alpha source.
-
-    If any step fails, returns False and falls back to surrogate-only mode.
+    Returns:
+      signal_df:   (T, N) — stress-gated NAV premium signals
+      stress_meta: (T, 2) — ap_stress_indicator, n_active_tickers
     """
-    if not _GAT_WEIGHTS.exists():
-        logger.info(
-            f"GATv2 weights not found at {_GAT_WEIGHTS}. Running in Surrogate Mode."
-        )
-        return False
+    from signals.etf_nav_arb import ETFNavArbSignal
 
-    try:
-        import torch
-        from torch_geometric.data import Data
-        from models.alpha.gat_alpha import MultiRelationalGAT
-        import yaml
+    logger.info("Stage 2: ETF NAV / AP stress signal...")
+    engine = ETFNavArbSignal()
+    await engine.load_data(start=start)
 
-        # Load config
-        config_path = Path("config/hyperparams.yaml")
-        if config_path.exists():
-            with open(config_path) as f:
-                cfg = yaml.safe_load(f).get("gat_alpha", {})
-        else:
-            cfg = {}
-
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-        model = MultiRelationalGAT(
-            node_feat_dim=cfg.get("node_feat_dim", _NODE_FEAT_DIM),
-            edge_feat_dim=cfg.get("edge_feat_dim", _EDGE_FEAT_DIM),
-            hidden_dim=cfg.get("hidden_dim", 128),
-            n_heads=cfg.get("n_heads", 8),
-            n_layers=cfg.get("n_layers", 3),
-        ).to(device)
-
-        model.load_state_dict(
-            torch.load(str(_GAT_WEIGHTS), map_location=device, weights_only=True)
-        )
-        model.eval()
-        logger.info(f"✅ GATv2 weights loaded from {_GAT_WEIGHTS}. Running Full Mode.")
-
-        # ── Batch inference ───────────────────────────────────────────────────
-        dates = returns_df.index
-        T = len(dates)
-        gat_alphas = np.zeros((T, N_ASSETS), dtype=np.float32)
-
-        def _parse_z(val):
-            if isinstance(val, (list, np.ndarray)):
-                return np.asarray(val, dtype=np.float32)
-            if isinstance(val, str):
-                return np.array(json.loads(val), dtype=np.float32)
-            return np.zeros(_REGIME_DIM, dtype=np.float32)
-
-        n_inferred = 0
-        for idx in range(T):
-            date = dates[idx]
-
-            # Build obs features
-            w0 = max(0, idx - 21)
-            window = returns_df.iloc[w0:idx].values
-            obs = np.zeros((N_ASSETS, _OBS_DIM), dtype=np.float32)
-            if window.shape[0] >= 3:
-                mean_r  = window.mean(axis=0)
-                std_r   = window.std(axis=0) + 1e-8
-                z_ret   = np.clip(mean_r / std_r, -3.0, 3.0)
-                vol_r   = std_r * np.sqrt(252.0)
-                vol_norm = vol_r / (vol_r.mean() + 1e-8)
-                for i in range(N_ASSETS):
-                    obs[i, 0] = z_ret[i]
-                    obs[i, 1] = vol_norm[i]
-
-            # Regime z_mu
-            if date in regime_df.index:
-                z_mu = _parse_z(regime_df.loc[date, "z_mu"])[:_REGIME_DIM]
-            else:
-                z_mu = np.zeros(_REGIME_DIM, dtype=np.float32)
-            z_broadcast = np.tile(z_mu, (N_ASSETS, 1))
-
-            # Node features
-            llm = np.zeros((N_ASSETS, _LLM_DIM), dtype=np.float32)
-            x = np.concatenate([obs, z_broadcast, llm], axis=1).astype(np.float32)
-
-            # Edge graph (DCC)
-            cw0 = max(0, idx - 63)
-            corr_window = returns_df.iloc[cw0:idx].values
-            if corr_window.shape[0] >= 20:
-                corr = np.corrcoef(corr_window.T)
-                src, dst, attrs = [], [], []
-                for i in range(N_ASSETS):
-                    for j in range(N_ASSETS):
-                        if i != j and abs(corr[i, j]) > _DCC_THRESHOLD:
-                            src.append(i)
-                            dst.append(j)
-                            attr = np.zeros(_EDGE_FEAT_DIM, dtype=np.float32)
-                            attr[1] = float(corr[i, j])
-                            attrs.append(attr)
-                if len(src) < 10:
-                    # Fallback: fully connected
-                    src = [i for i in range(N_ASSETS) for j in range(N_ASSETS) if i != j]
-                    dst = [j for i in range(N_ASSETS) for j in range(N_ASSETS) if i != j]
-                    attrs = [np.zeros(_EDGE_FEAT_DIM, dtype=np.float32) for _ in src]
-                    for a in attrs:
-                        a[1] = 0.3  # default correlation weight
-            else:
-                src = [i for i in range(N_ASSETS) for j in range(N_ASSETS) if i != j]
-                dst = [j for i in range(N_ASSETS) for j in range(N_ASSETS) if i != j]
-                attrs = [np.zeros(_EDGE_FEAT_DIM, dtype=np.float32) for _ in src]
-
-            edge_index = torch.tensor([src, dst], dtype=torch.long).to(device)
-            edge_attr  = torch.tensor(np.array(attrs), dtype=torch.float32).to(device)
-            x_tensor   = torch.tensor(x, dtype=torch.float32).to(device)
-
-            with torch.no_grad():
-                alpha = model(x_tensor, edge_index, edge_attr)
-                gat_alphas[idx] = alpha.cpu().numpy()
-
-            n_inferred += 1
-            if n_inferred % 200 == 0:
-                logger.info(f"  ⚡ GATv2 inference: {n_inferred}/{T} dates processed...")
-
-        logger.info(f"✅ Full-mode GATv2 inference complete ({n_inferred} dates).")
-
-        # Save GATv2-only output (before blending with surrogate)
-        gat_df = pd.DataFrame(gat_alphas, index=dates, columns=TICKERS)
-        _CACHE_DIR = Path("research/outputs/cache")
-        gat_df.to_parquet(_CACHE_DIR / "gat_alpha_raw.parquet")
-        logger.info(f"GATv2 raw alpha saved → {_CACHE_DIR / 'gat_alpha_raw.parquet'}")
-
-        # NOTE: We return False here intentionally so the surrogate pipeline
-        # ALSO runs and the final alpha is blended. The caller (main()) should
-        # be modified to blend if gat_alpha_raw.parquet exists.
-        return False  # Let surrogate also run for blending
-
-    except ImportError as exc:
-        logger.warning(f"PyG not available ({exc}). Running Surrogate Mode.")
-        return False
-    except Exception as exc:
-        logger.warning(f"Full mode GATv2 aborted ({exc}). Running Surrogate Mode.")
-        return False
+    signal_df, stress_meta = engine.compute_full_history()
+    logger.info(
+        f"  ✓ NAV arb: {len(signal_df)} days | "
+        f"Active days (AP stress): {(stress_meta['n_active'] > 0).sum()} "
+        f"({(stress_meta['n_active'] > 0).mean() * 100:.1f}%)"
+    )
+    return signal_df, stress_meta
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Surrogate Alpha — 8-factor blend + FactorDecayMonitor (P2)
+# Stage 3: SEC filing intelligence
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _compute_surrogate_alpha(
-    prices_df:  pd.DataFrame,
-    returns_df: pd.DataFrame,
-    regime_df:  pd.DataFrame,
+async def stage3_sec_insider(
+    dates: pd.DatetimeIndex,
+    batch_size: int = 5,
 ) -> pd.DataFrame:
     """
-    8-factor regime-conditioned alpha engine with FactorDecayMonitor gating.
+    Compute IWM insider cluster buying + activist sector signals.
+    Signal is narrow (non-zero for IWM and sector ETFs only).
+    Fetched with EDGAR rate-limit awareness (6 concurrent requests max).
 
-    Factor pipeline:
-      1. Build all factor DataFrames (T×N) — full causal computation.
-      2. Fit FactorDecayMonitor on all factors vs. next-day returns.
-      3. Per-day blend loop: compute raw λ weights, apply decay gate,
-         L1-renormalize, blend signals, apply tanh squash.
+    FREQUENCY: We compute this WEEKLY (not daily) to reduce EDGAR API calls.
+    For dates between weekly recomputation, we hold the last value.
+    This is valid because insider/activist signals decay slowly (30-90d horizon).
 
-    P2 wiring:
-      FactorDecayMonitor.get_lambda_multipliers(t) returns a binary gate per
-      factor for day t. The gate is computed from EWMA IC using only data
-      from days {0..t-1}, preserving strict look-ahead-free causality.
+    Returns:
+      insider_df: (T, N) — insider + activist alpha per ticker
     """
-    logger.info("Computing Factor 1:  Cross-Sectional Momentum (12-1M)...")
-    f_mom  = _build_momentum_signal(returns_df)
-    logger.info("Computing Factor 1b: Cross-Sectional Momentum (6-1M)...")
-    f_mom6 = _build_momentum_6m_signal(returns_df)
-    logger.info("Computing Factor 2:  Short-Term Reversal (21d)...")
-    f_rev  = _build_reversal_signal(returns_df)
-    logger.info("Computing Factor 3:  Low-Volatility Anomaly (63d)...")
-    f_vol  = _build_vol_signal(returns_df)
-    logger.info("Computing Factor 4:  Fixed-Income Carry (BUG #18 FIX)...")
-    carry_vec = np.array([_build_carry_signal()[t] for t in TICKERS], dtype=np.float64)
-    logger.info("Computing Factor 7:  5-Day Short-Term Reversal...")
-    f_rev5 = _build_reversal_5d_signal(returns_df)
-    logger.info("Computing Factor 8:  Idiosyncratic Momentum...")
-    f_idio = _build_idiosyncratic_momentum_signal(returns_df)
-    logger.info("Computing Factor 9:  AIS Commodity Flow (optional)...")
-    f_ais  = _build_ais_signal(returns_df)
-    
-    # PATCH 4: Add F10 to factor list
-    logger.info("Computing Factor 10: Cross-Asset Dispersion...")
-    f_disp = _build_dispersion_factor(returns_df)
+    from signals.sec_insider import SECFilingIntelligence
 
-    # ── P2 FIX: fit FactorDecayMonitor ───────────────────────────────────────
-    # F4 carry is a static cross-sectional vector (same value every day across
-    # the date axis). Broadcasting to (T,N) gives zero cross-sectional variance
-    # on every day → IC ≡ 0 → always gated. To keep carry active (it has genuine
-    # yield carry, just not cross-sectional momentum IC), we treat it as always-on
-    # by tiling the carry vector, which gives the IC monitor a valid signal to score.
-    logger.info("Fitting FactorDecayMonitor (EWMA Spearman IC, halflife=63d)...")
-    decay_monitor = FactorDecayMonitor()
-    decay_monitor.fit(
-        factor_arrays=[
-            f_mom.values.astype(np.float64),    # F1_mom
-            f_mom6.values.astype(np.float64),   # F1b_mom6
-            f_rev.values.astype(np.float64),    # F2_rev21
-            f_vol.values.astype(np.float64),    # F3_vol
-            # F4 carry: static vector broadcast to (T,N) for IC computation
-            np.tile(carry_vec, (len(returns_df), 1)).astype(np.float64),
-            f_rev5.values.astype(np.float64),   # F7_rev5
-            f_idio.values.astype(np.float64),   # F8_idio
-            f_disp.values.astype(np.float64),   # F10_disp
-        ],
-        returns_matrix=returns_df.values.astype(np.float64),
+    logger.info("Stage 3: SEC filing intelligence (IWM insider + activist)...")
+    engine = SECFilingIntelligence(lookback_days=30)
+
+    # Compute weekly (every 5 trading days) to limit EDGAR load
+    weekly_dates  = dates[::5]
+    weekly_signals: Dict[str, pd.Series] = {}
+
+    n_computed = 0
+    for date in weekly_dates:
+        date_str = str(date.date())
+        try:
+            alpha = await engine.get_combined_alpha_vector(date_str)
+            weekly_signals[date_str] = alpha
+            n_computed += 1
+            if n_computed % 10 == 0:
+                logger.info(f"  SEC signals: {n_computed}/{len(weekly_dates)} weeks")
+        except Exception as e:
+            logger.debug(f"  SEC signals failed for {date_str}: {e}")
+            weekly_signals[date_str] = pd.Series(0.0, index=TICKERS)
+
+        # Minimal sleep to respect EDGAR rate limits
+        await asyncio.sleep(0.5)
+
+    # Build weekly DataFrame
+    weekly_df = pd.DataFrame(weekly_signals).T
+    weekly_df.index = pd.to_datetime(weekly_df.index)
+    weekly_df = weekly_df.sort_index()
+
+    # Forward-fill to daily (hold last weekly value)
+    insider_df = weekly_df.reindex(dates).ffill().fillna(0.0)
+
+    n_nonzero = (insider_df.abs() > 0.01).any(axis=1).mean() * 100
+    logger.info(
+        f"  ✓ SEC insider: {len(insider_df)} days | "
+        f"Non-zero signal: {n_nonzero:.1f}% of days (expected: IWM + up to 10 sector ETFs)"
     )
+    return insider_df
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stage 4: Low-volatility anomaly (baseline factor)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def stage4_low_vol(returns_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Low-volatility anomaly: lower-vol assets tend to earn higher risk-adjusted
+    returns. Used as a baseline signal with LOW WEIGHT (0.10) — it's always-on
+    but not a primary alpha source. Its value is providing a floor of signal
+    quality when other signals are sparse or zero.
+
+    SIGNAL: -rank(realized_vol_63d) normalised cross-sectionally.
+    Negative because we want LOW vol = HIGH signal.
+
+    RISK: This signal can fail dramatically in risk-on momentum regimes where
+    high-vol assets (growth, biotech, crypto-adjacent) outperform. The regime
+    gate from MultiAssetVolRegime should reduce its weight when equity_regime
+    shows complacent/bull signal (vol carry is unfavourable in late-bull).
+    We handle this in the signal router training — the GATv2 will learn to
+    downweight low-vol signal in complacent equity regimes.
+    """
+    logger.info("Stage 4: Low-volatility anomaly (baseline)...")
+    rv_63 = returns_df.reindex(columns=TICKERS).rolling(63, min_periods=20).std() * np.sqrt(252)
+    rv_63 = rv_63.ffill().fillna(rv_63.mean())
+
+    # Cross-sectional rank normalisation: -rank(vol) → long low-vol, short high-vol
+    rank_vol = rv_63.rank(axis=1, pct=True)
+    signal   = -(rank_vol - 0.5)  # center at zero
+
+    # Tanh squash to [-1, 1]
+    result = np.tanh(signal * 2.0)
 
     logger.info(
-        "Computing Factors 5/6: Regime Tilt + Price Trend Override (BUG #17 FIX) "
-        "+ decay-gated blend loop..."
-    )
-
-    def _parse_z_mu(val) -> np.ndarray:
-        if isinstance(val, (list, np.ndarray)):
-            return np.asarray(val, dtype=np.float32)
-        if isinstance(val, str):
-            return np.array(json.loads(val), dtype=np.float32)
-        return np.zeros(16, dtype=np.float32)
-
-    mom_arr   = f_mom.values.astype(np.float64)
-    mom6_arr  = f_mom6.values.astype(np.float64)
-    rev_arr   = f_rev.values.astype(np.float64)
-    vol_arr   = f_vol.values.astype(np.float64)
-    rev5_arr  = f_rev5.values.astype(np.float64)
-    idio_arr  = f_idio.values.astype(np.float64)
-    disp_arr  = f_disp.values.astype(np.float64)
-    ais_arr   = f_ais.values.astype(np.float64) if f_ais is not None else None
-
-    dates     = returns_df.index
-    prices_np = prices_df.reindex(columns=TICKERS).values.astype(np.float64, order="C")
-
-    vixy_idx  = TICKERS.index("VIXY")
-    cash_idxs = [TICKERS.index(t) for t in ("SHV", "BIL")]
-
-    alpha_rows: List[np.ndarray] = []
-
-    # Track how often each factor is gated out (for diagnostic)
-    gate_zero_counts = np.zeros(8, dtype=int)
-
-    for i, date in enumerate(dates):
-        # ── Regime posterior ──────────────────────────────────────────────────
-        z_mu = (
-            _parse_z_mu(regime_df.loc[date, "z_mu"])
-            if date in regime_df.index
-            else np.zeros(16, dtype=np.float32)
-        )
-        z_pca  = float(np.clip(z_mu[0], -3.0, 3.0))
-        z_mu_2 = float(np.clip(z_mu[2], -3.0, 3.0))
-
-        # ── BUG #17 FIX: price-trend regime blending ─────────────────────────
-        prices_i = int(prices_df.index.get_loc(date)) if date in prices_df.index else i
-        trend_z  = _price_trend_z(prices_np, prices_i)
-
-        trend_w     = float(np.clip(abs(trend_z) / 2.0 * 0.70, 0.0, 0.70))
-        z_effective = float(np.clip(trend_w * trend_z + (1.0 - trend_w) * z_pca, -2.5, 2.5))
-
-        # ── Raw lambda weights ────────────────────────────────────────────────
-        raw_lambdas = np.array([
-            float(np.clip(z_effective * 0.35  + 0.50, 0.05, 0.90)),   # F1  mom
-            float(np.clip(z_effective * 0.22  + 0.27, 0.00, 0.58)),   # F1b mom6
-            float(np.clip(-z_effective * 0.22 + 0.13, 0.00, 0.45)),   # F2  rev21
-            float(np.clip(0.22 + abs(z_mu_2)  * 0.22, 0.10, 0.58)),  # F3  vol
-            float(np.clip(z_effective * 0.18  + 0.22, 0.00, 0.40)),   # F4  carry
-            float(np.clip(-abs(z_effective) * 0.20 + 0.30, 0.00, 0.35)),  # F7 rev5
-            float(np.clip(z_effective * 0.30  + 0.55, 0.05, 0.80)),   # F8  idio
-            float(np.clip(0.30, 0.10, 0.50)),                         # F10 disp (static base, modulated by signal)
-        ], dtype=np.float64)
-
-        # ── P2 FIX: apply decay gate + L1-renormalize ─────────────────────────
-        gate = decay_monitor.get_lambda_multipliers(i)
-        gate_zero_counts += (gate == 0.0).astype(int)
-        gated_lambdas = FactorDecayMonitor.renormalize_lambdas(raw_lambdas, gate)
-
-        lam_mom   = gated_lambdas[0]
-        lam_mom6  = gated_lambdas[1]
-        lam_rev   = gated_lambdas[2]
-        lam_vol   = gated_lambdas[3]
-        lam_carry = gated_lambdas[4]
-        lam_rev5  = gated_lambdas[5]
-        lam_idio  = gated_lambdas[6]
-        lam_disp  = gated_lambdas[7]
-        lam_ais   = 0.20 if ais_arr is not None else 0.0
-
-        alpha_raw = (
-              lam_mom   * mom_arr[i]
-            + lam_mom6  * mom6_arr[i]
-            + lam_rev   * rev_arr[i]
-            + lam_vol   * vol_arr[i]
-            + lam_carry * carry_vec
-            + lam_rev5  * rev5_arr[i]
-            + lam_idio  * idio_arr[i]
-            + lam_disp  * disp_arr[i]
-            + (lam_ais  * ais_arr[i] if ais_arr is not None else 0.0)
-            + _build_regime_tilt_signal(z_effective)
-        )
-        alpha_tanh = np.tanh(alpha_raw)
-
-        # ── VIXY override: vol-conditioned ────────────────────────────────────
-        cross_vol = float(
-            np.nanstd(returns_df.iloc[max(0, i - 21): i].values)
-        ) if i >= 5 else 0.01
-        vixy_base = float(np.tanh(-z_effective * 1.5))
-        vixy_vcap = float(np.clip(cross_vol / 0.012 - 0.3, 0.0, 1.0))
-        alpha_tanh[vixy_idx] = vixy_base * vixy_vcap
-
-        # ── Cash override: always non-negative (BUG #18 FIX) ─────────────────
-        for cash_idx in cash_idxs:
-            bear_premium = float(np.clip(-z_effective * 0.3, 0.0, 0.3))
-            alpha_tanh[cash_idx] = float(np.clip(0.1 + bear_premium, 0.0, 1.0))
-
-        alpha_rows.append(alpha_tanh)
-
-        if i % 200 == 0:
-            top3        = sorted(zip(alpha_tanh, TICKERS), reverse=True)[:3]
-            bot3        = sorted(zip(alpha_tanh, TICKERS))[:3]
-            active_f    = sum(gate)
-            regime_name = _infer_regime_name(z_effective)
-            logger.info(
-                f"  [{i}/{len(dates)}] {str(date)[:10]} | "
-                f"z_pca={z_pca:+.2f} z_eff={z_effective:+.2f} | "
-                f"Regime={regime_name} | "
-                f"ActiveFactors={int(active_f)}/8 | "
-                f"Top: {', '.join(f'{t}({v:.2f})' for v, t in top3)} | "
-                f"Bot: {', '.join(f'{t}({v:.2f})' for v, t in bot3)}"
-            )
-
-    # ── Decay statistics ──────────────────────────────────────────────────────
-    T = len(dates)
-    logger.info("Factor decay gating summary (% of days zeroed by IC monitor):")
-    for fi, name in enumerate(FactorDecayMonitor.FACTOR_NAMES):
-        pct_gated = gate_zero_counts[fi] / T * 100
-        logger.info(f"  {name:12s}: {pct_gated:.1f}% of days gated out")
-
-    result = pd.DataFrame(
-        np.array(alpha_rows),
-        index=returns_df.index,
-        columns=TICKERS,
+        f"  ✓ Low-vol signal: {len(result)} days | "
+        f"Mean |signal|: {result.abs().mean().mean():.3f}"
     )
     return result
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Entry point
+# Stage 5: Signal blending (GATv2 router or EWMA IC fallback)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def main() -> None:
-    logger.info("══════ Fortress v5 — Alpha Signal Precomputation (P2: FactorDecayMonitor) ══════")
+def _build_ewma_ic_fallback_weights(
+    signal_stack:  np.ndarray,   # (T, N, S)
+    returns_np:    np.ndarray,   # (T, N)
+    halflife:      int = 63,
+    ic_window:     int = 21,
+) -> np.ndarray:
+    """
+    Causal EWMA IC history used as fallback blending weights when GATv2
+    signal router weights are unavailable.
 
-    for path in (_PRICES_PATH, _RETURNS_PATH, _REGIME_PATH):
-        if not path.exists():
-            logger.error(
-                f"Missing required cache: {path}. Run precompute_regime_posteriors.py first."
+    For each date t, computes the EWMA of historical cross-sectional IC:
+      IC_s(t_past) = Spearman_corr(signal_s[t_past, :], r[t_past+1, :])
+                     (cross-sectional over N=25 assets)
+      ewma_ic_s(t) = EWMA(IC_s(t_past), halflife=63)
+
+    NOTE: This is the CROSS-SECTIONAL IC (across assets at a single date),
+    not the TEMPORAL IC used in the signal router training. Both are valid;
+    the cross-sectional IC is faster to compute and sufficient for the fallback.
+    """
+    from scipy import stats
+
+    T, N, S = signal_stack.shape
+    cross_ic = np.zeros((T, S), dtype=np.float32)
+
+    # Compute raw cross-sectional IC series
+    for t in range(T - 1):
+        sig_t    = signal_stack[t]           # (N, S)
+        ret_t1   = returns_np[t + 1]         # (N,)
+        valid    = ~np.isnan(ret_t1)
+        if valid.sum() < 10:
+            continue
+        for s in range(S):
+            sig_s = sig_t[valid, s]
+            ret_s = ret_t1[valid]
+            if np.std(sig_s) < 1e-6:
+                continue
+            try:
+                ic, _ = stats.spearmanr(sig_s, ret_s)
+                if not np.isnan(ic):
+                    cross_ic[t, s] = float(ic)
+            except Exception:
+                pass
+
+    # EWMA over history — causal
+    alpha_decay = 1.0 - np.exp(-1.0 / halflife)
+    ewma_ic = np.zeros_like(cross_ic)
+    running = np.zeros(S, dtype=np.float32)
+    running_w = 0.0
+
+    for t in range(T):
+        running_w  = running_w * (1 - alpha_decay) + alpha_decay
+        running    = running   * (1 - alpha_decay) + cross_ic[t] * alpha_decay
+        if running_w > 1e-6:
+            ewma_ic[t] = running / running_w
+
+    # Broadcast to per-asset weights: (T, S) → (T, N, S)
+    # For the fallback, all assets in a class share the same weights
+    weights_broadcast = np.broadcast_to(
+        ewma_ic[:, np.newaxis, :],  # (T, 1, S)
+        (T, N, S),
+    ).copy()
+
+    # Softmax over S dimension
+    weights_broadcast = np.exp(weights_broadcast * 2.0)  # temperature=0.5
+    weights_broadcast /= (weights_broadcast.sum(axis=-1, keepdims=True) + 1e-8)
+
+    return weights_broadcast  # (T, N, S)
+
+
+def stage5_blend_signals(
+    signal_dfs: Dict[str, pd.DataFrame],
+    regime_df:  pd.DataFrame,
+    returns_df: pd.DataFrame,
+    dates:      pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """
+    Blend all signals into a final alpha vector.
+
+    PRIORITY ORDER:
+      1. GATv2 Signal Router (if weights exist and PyG available)
+      2. EWMA-IC weighted fallback (always available)
+
+    SIGNAL STACK CONSTRUCTION:
+      signal_stack[t, i, s] = value of signal_s for asset_i at date_t
+
+    STATIC WEIGHTS (used in both modes for LOW-VOL signal):
+      The low-vol signal always gets weight 0.10 (information floor).
+      The remaining 0.90 is allocated by the signal router.
+
+    REGIME GATING:
+      After blending, apply asset-specific urgency scaling:
+        alpha_final[i] = alpha_blended[i] × (1 − urgency[i] × 0.7)
+              + safe_haven_signal[i] × urgency[i] × 0.7
+
+      When urgency is high for an asset class, alpha compresses toward
+      safe-haven (TLT, GLD, BIL) rather than maintaining equity alpha.
+      This prevents the 2022-style scenario where equity alpha was
+      systematically wrong while rate/credit regimes were in full crisis.
+    """
+    import json
+
+    logger.info("Stage 5: Signal blending...")
+
+    signal_names_ordered = ["vrp", "vts", "nav_arb", "insider", "low_vol"]
+
+    # Build signal stack (T, N, S)
+    T = len(dates)
+    N = N_ASSETS
+    S = N_SIGNALS
+    signal_stack = np.zeros((T, N, S), dtype=np.float32)
+
+    for s_idx, sig_name in enumerate(signal_names_ordered):
+        if sig_name in signal_dfs:
+            df = signal_dfs[sig_name].reindex(dates).ffill().fillna(0.0).reindex(columns=TICKERS).fillna(0.0)
+            signal_stack[:, :, s_idx] = df.values.astype(np.float32)
+        else:
+            logger.warning(f"Signal '{sig_name}' not in signal_dfs — using zeros")
+
+    returns_np = returns_df.reindex(dates).reindex(columns=TICKERS).fillna(0.0).values
+
+    # ── Attempt GATv2 signal router ────────────────────────────────────────────
+    blending_weights = None
+
+    if _ROUTER_WEIGHTS.exists():
+        try:
+            import torch
+            from models.alpha.gat_signal_router import (
+                SignalRouterGAT, build_economic_graph, build_node_features
             )
+
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            model  = SignalRouterGAT().to(device)
+            model.load_state_dict(
+                torch.load(str(_ROUTER_WEIGHTS), map_location=device, weights_only=True)
+            )
+            model.eval()
+            logger.info(f"  GATv2 Signal Router loaded from {_ROUTER_WEIGHTS}")
+
+            edge_index, edge_attr = build_economic_graph()
+            edge_index = edge_index.to(device)
+            edge_attr  = edge_attr.to(device)
+
+            def parse_zmu(val) -> np.ndarray:
+                if isinstance(val, (list, np.ndarray)):
+                    return np.asarray(val, dtype=np.float32)
+                if isinstance(val, str):
+                    return np.array(json.loads(val), dtype=np.float32)
+                return np.zeros(16, dtype=np.float32)
+
+            regime_zmu_dict = {
+                str(pd.Timestamp(idx).date()): parse_zmu(row["z_mu"])
+                for idx, row in regime_df.iterrows()
+            }
+
+            blending_weights = np.zeros((T, N, S), dtype=np.float32)
+
+            with torch.no_grad():
+                for t_idx, date in enumerate(dates):
+                    date_str = str(date.date())
+                    z_mu = regime_zmu_dict.get(date_str, np.zeros(16, dtype=np.float32))
+
+                    # Use cross-sectional EWMA IC as node features (causal)
+                    ic_hist_t = np.zeros((N, S), dtype=np.float32)
+                    if t_idx > 10:
+                        # Approximate per-asset IC from recent returns
+                        for s in range(S):
+                            for i in range(N):
+                                sig_arr = signal_stack[max(0, t_idx-21):t_idx, i, s]
+                                ret_arr = returns_np[max(1, t_idx-20):t_idx+1, i]
+                                if len(sig_arr) > 5 and len(ret_arr) > 5:
+                                    n_min = min(len(sig_arr), len(ret_arr))
+                                    try:
+                                        from scipy import stats
+                                        ic, _ = stats.spearmanr(sig_arr[-n_min:], ret_arr[-n_min:])
+                                        ic_hist_t[i, s] = float(ic) if not np.isnan(ic) else 0.0
+                                    except Exception:
+                                        pass
+
+                    x = build_node_features(
+                        regime_tensor_zmu=z_mu,
+                        signal_ic_history=ic_hist_t,
+                        vol_betas=np.zeros(N, dtype=np.float32),  # simplified — full betas in train
+                        rate_betas=np.zeros(N, dtype=np.float32),
+                        liquidity_z=np.zeros(N, dtype=np.float32),
+                    ).to(device)
+
+                    signal_mat = torch.from_numpy(signal_stack[t_idx]).float().to(device)
+                    weights, _ = model(x, edge_index, edge_attr)
+                    blending_weights[t_idx] = weights.cpu().numpy()
+
+                    if t_idx % 200 == 0:
+                        logger.info(f"  GATv2 routing: {t_idx}/{T} dates")
+
+            logger.info(f"  ✓ GATv2 signal routing complete")
+
+        except Exception as exc:
+            logger.warning(f"  GATv2 routing failed ({exc}) — using EWMA-IC fallback")
+            blending_weights = None
+
+    # ── EWMA-IC fallback ───────────────────────────────────────────────────────
+    if blending_weights is None:
+        logger.info("  Using EWMA-IC weighted fallback...")
+        blending_weights = _build_ewma_ic_fallback_weights(
+            signal_stack=signal_stack,
+            returns_np=returns_np,
+        )
+        logger.info("  ✓ EWMA-IC fallback weights computed")
+
+    # ── Blended alpha ──────────────────────────────────────────────────────────
+    # alpha_raw = Σ_s W_is × signal_s(i)
+    alpha_raw = (blending_weights * signal_stack).sum(axis=-1)  # (T, N)
+
+    # ── Asset-class regime gating ──────────────────────────────────────────────
+    # When asset-specific urgency is high, compress toward safe-haven allocation
+    safe_haven_allocation = np.zeros((T, N), dtype=np.float32)
+    for i, ticker in enumerate(TICKERS):
+        if ticker in ("TLT", "GLD", "BIL", "SHV"):
+            safe_haven_allocation[:, i] = 0.8   # safe havens get positive alpha in crisis
+
+    # Build per-asset urgency matrix from regime_df
+    urgency_matrix = np.zeros((T, N), dtype=np.float32)
+
+    if "ltc_urgency" in regime_df.columns:
+        regime_reindexed = regime_df.reindex(dates).ffill()
+        base_urgency     = regime_reindexed["ltc_urgency"].fillna(0.0).values
+
+        # Route urgency to correct axis per asset
+        for i, ticker in enumerate(TICKERS):
+            equity_weight    = _get_equity_routing_weight(ticker)
+            bond_weight      = _get_bond_routing_weight(ticker)
+            commodity_weight = _get_commodity_routing_weight(ticker)
+
+            asset_urgency = base_urgency * (0.4 + 0.6 * (1 - equity_weight))
+            urgency_matrix[:, i] = np.clip(asset_urgency, 0.0, 1.0)
+
+    # Apply regime gate
+    crisis_scale = np.clip(urgency_matrix * 0.7, 0.0, 0.7)
+    alpha_gated  = (
+        alpha_raw   * (1 - crisis_scale) +
+        safe_haven_allocation * crisis_scale
+    )
+
+    # Final tanh squash to [-1, 1]
+    alpha_final = np.tanh(alpha_gated).astype(np.float32)
+
+    result_df = pd.DataFrame(alpha_final, index=dates, columns=TICKERS)
+
+    logger.info(
+        f"  ✓ Blended alpha: {len(result_df)} days × {N} assets | "
+        f"Mean |alpha|: {result_df.abs().mean().mean():.3f} | "
+        f"Max: {result_df.max().max():.3f}"
+    )
+    return result_df
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Routing weight helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _get_equity_routing_weight(ticker: str) -> float:
+    equity = {"SPY", "QQQ", "IWM", "XLE", "XLF", "XLK", "XLV", "XLU",
+              "XLI", "XLP", "XLY", "XLB", "XLC", "COWZ", "VIXY"}
+    if ticker in equity: return 1.0
+    if ticker in {"GDX", "PDBC"}: return 0.3
+    return 0.0
+
+def _get_bond_routing_weight(ticker: str) -> float:
+    bond = {"TLT": 1.0, "LQD": 0.6, "HYG": 0.4, "BIL": 1.0, "SHV": 1.0}
+    return bond.get(ticker, 0.0)
+
+def _get_commodity_routing_weight(ticker: str) -> float:
+    comm = {"GLD": 1.0, "SLV": 1.0, "GDX": 0.7, "USO": 1.0, "PDBC": 0.7}
+    return comm.get(ticker, 0.0)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Main entry point
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def main() -> None:
+    logger.info("══════ Fortress v5 — Alpha Signal Precomputation [REWRITE] ══════")
+
+    for path in [_PRICES_PATH, _RETURNS_PATH]:
+        if not path.exists():
+            logger.error(f"Missing required cache: {path}")
+            logger.error("Run data ingestion pipeline first (Stage 1).")
             sys.exit(1)
 
-    logger.info("Loading cached market data...")
+    logger.info("Loading market data...")
     prices_df  = pd.read_parquet(_PRICES_PATH)
     returns_df = pd.read_parquet(_RETURNS_PATH)
-    logger.info("Loading cached regime posteriors...")
-    regime_df  = pd.read_parquet(_REGIME_PATH)
 
-    for df in (prices_df, returns_df, regime_df):
+    for df in [prices_df, returns_df]:
         df.index = pd.to_datetime(df.index)
         df.sort_index(inplace=True)
         if df.index.duplicated().any():
             df.drop(df.index[df.index.duplicated(keep="last")], inplace=True)
 
+    start_date = str(returns_df.index[0].date())
+    dates      = returns_df.index
+
     logger.info(
-        f"Market data: {len(returns_df)} days × {len(TICKERS)} assets | "
-        f"Regime posteriors: {len(regime_df)} rows"
+        f"Market data: {len(returns_df)} days × {N_ASSETS} assets | "
+        f"Start: {start_date} | End: {str(dates[-1].date())}"
     )
 
-    common_dates    = returns_df.index.intersection(regime_df.index)
-    returns_aligned = returns_df.loc[common_dates]
-    prices_aligned  = prices_df.reindex(common_dates).ffill()
-    logger.info(f"Aligned dataset: {len(returns_aligned)} trading days")
+    # ── Stage 0: Regime ────────────────────────────────────────────────────────
+    regime_df, regime_meta = await stage0_vol_regime(start=start_date)
+    regime_df.index = pd.to_datetime(regime_df.index)
 
-    # Run GATv2 first. It returns False to allow surrogate blending to proceed.
-    _try_full_mode_gat(returns_aligned, regime_df)
+    # ── Stage 1: Options surface ───────────────────────────────────────────────
+    options_df = await stage1_options_alpha(start=start_date)
+    options_df.index = pd.to_datetime(options_df.index)
 
-    factors_active = [
-        "F1(mom)", "F1b(mom6)", "F2(rev21)", "F3(vol)",
-        "F4(carry)", "F5(tilt)", "F7(rev5)", "F8(idio)",
-        "F10(disp)", "FactorDecayMonitor(P2)",
-    ]
-    if _ais_available:
-        factors_active.append("F9(AIS)")
-    logger.info(
-        f"Surrogate Mode: {len(factors_active)}-component pipeline — "
-        f"{', '.join(factors_active)}"
+    # ── Stage 2: ETF NAV / AP stress ──────────────────────────────────────────
+    nav_df, stress_meta = await stage2_nav_arb(start=start_date)
+    nav_df.index = pd.to_datetime(nav_df.index)
+
+    # ── Stage 3: SEC filing intelligence ──────────────────────────────────────
+    insider_df = await stage3_sec_insider(dates=dates)
+    insider_df.index = pd.to_datetime(insider_df.index)
+
+    # ── Stage 4: Low-vol baseline ──────────────────────────────────────────────
+    lowvol_df = stage4_low_vol(returns_df)
+    lowvol_df.index = pd.to_datetime(lowvol_df.index)
+
+    # ── Save per-signal matrices ───────────────────────────────────────────────
+    # Long format: columns = {signal_name}_{ticker}
+    signal_dfs: Dict[str, pd.DataFrame] = {
+        "vrp":     options_df,   # VRP from options engine (also contains VTS)
+        "vts":     options_df,   # Same engine, different components — router separates
+        "nav_arb": nav_df,
+        "insider": insider_df,
+        "low_vol": lowvol_df,
+    }
+
+    # Build long-format signals DataFrame for train_signal_router.py
+    long_frames = []
+    for sig_name, df in signal_dfs.items():
+        df_aligned = df.reindex(dates).ffill().fillna(0.0).reindex(columns=TICKERS).fillna(0.0)
+        df_long    = df_aligned.copy()
+        df_long.columns = [f"{sig_name}_{t}" for t in df_long.columns]
+        long_frames.append(df_long)
+
+    signals_long_df = pd.concat(long_frames, axis=1)
+    signals_long_df.to_parquet(_SIGNALS_OUT)
+    logger.info(f"✓ Per-signal alpha matrix → {_SIGNALS_OUT} ({signals_long_df.shape})")
+
+    # ── Stage 5: Signal blending ───────────────────────────────────────────────
+    alpha_df = stage5_blend_signals(
+        signal_dfs=signal_dfs,
+        regime_df=regime_df,
+        returns_df=returns_df,
+        dates=dates,
     )
 
-    alpha_df = _compute_surrogate_alpha(prices_aligned, returns_aligned, regime_df)
-
-    # PATCH 3: Updated main() blending logic
-    _GAT_RAW = _CACHE_DIR / "gat_alpha_raw.parquet"
-    if _GAT_RAW.exists():
-        gat_raw = pd.read_parquet(_GAT_RAW)
-        gat_raw.index = pd.to_datetime(gat_raw.index)
-        common = alpha_df.index.intersection(gat_raw.index)
-        if len(common) > 50:
-            logger.info(
-                f"Blending surrogate + GATv2 alpha (50/50) on {len(common)} dates."
-            )
-            alpha_df.loc[common] = (
-                0.5 * alpha_df.loc[common].values
-                + 0.5 * gat_raw.loc[common].values
-            )
-            # Re-clip to [-1, 1]
-            alpha_df = alpha_df.clip(-1.0, 1.0)
-
-
-    assert alpha_df.shape == (len(returns_aligned), N_ASSETS), (
-        f"Shape mismatch: {alpha_df.shape} != ({len(returns_aligned)}, {N_ASSETS})"
-    )
-    assert (alpha_df.abs() <= 1.0 + 1e-5).all().all(), \
-        "Alpha values outside [-1, 1] detected — tanh saturation failure."
+    # Validate output
+    assert alpha_df.shape == (len(dates), N_ASSETS), \
+        f"Shape mismatch: {alpha_df.shape} != ({len(dates)}, {N_ASSETS})"
+    assert not alpha_df.isnull().any().any(), "NaN values in final alpha"
+    assert (alpha_df.abs() <= 1.0 + 1e-5).all().all(), "Values outside [-1, 1]"
 
     alpha_df.to_parquet(_ALPHA_OUT)
-    logger.info(
-        f"✅ Alpha signals saved → {_ALPHA_OUT} "
-        f"({len(alpha_df)} rows × {N_ASSETS} assets)"
-    )
+    logger.info(f"✓ Blended alpha → {_ALPHA_OUT} ({alpha_df.shape})")
 
-    # ── Signal summary ────────────────────────────────────────────────────────
+    # ── Signal summary ─────────────────────────────────────────────────────────
     means = alpha_df.mean().sort_values(ascending=False)
-    logger.info("Alpha signal summary (time-averaged, post-decay-gate):")
+    logger.info("Alpha signal summary (time-averaged):")
     bar_scale = 6.0 / (means.abs().max() + 1e-8)
     for ticker, val in means.items():
         bar_len = int(abs(val) * bar_scale)
@@ -1022,11 +666,22 @@ def main() -> None:
         bar     = "█" * bar_len
         logger.info(f"  {ticker:6s}: {sign}{bar} ({val:+.3f})")
 
+    # ── IC statistics ──────────────────────────────────────────────────────────
+    logger.info("Per-signal mean cross-sectional |alpha|:")
+    for sig_name, df in signal_dfs.items():
+        df_a = df.reindex(dates).ffill().fillna(0.0).reindex(columns=TICKERS).fillna(0.0)
+        mean_abs = df_a.abs().mean().mean()
+        nonzero  = (df_a.abs() > 0.01).any(axis=1).mean() * 100
+        logger.info(f"  {sig_name:12s}: mean|α|={mean_abs:.3f} | active={nonzero:.1f}% of days")
+
     logger.info(
-        "Stage 2 complete (P2: FactorDecayMonitor active). "
-        "Run run_standalone_backtest.py next."
+        "\n══════ Stage 2 COMPLETE ══════\n"
+        "Next steps:\n"
+        "  1. python training/train_signal_router.py   (train GATv2 IC predictor)\n"
+        "  2. python scripts/run_standalone_backtest.py (validate with walk-forward)\n"
+        "  3. python scripts/run_cpcv_validation.py     (compute PBO)\n"
     )
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

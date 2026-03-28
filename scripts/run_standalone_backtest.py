@@ -1,52 +1,31 @@
 """
-FORTRESS v5 — scripts/run_standalone_backtest.py
-Path: scripts/run_standalone_backtest.py  [v7 — TURNOVER RECALIBRATION]
+FORTRESS v5 — scripts/run_standalone_backtest.py  [v9.6 — UNIFIED + GEX ENVELOPE]
 
-CHANGE LOG vs v6:
-  λ_TURN RECALIBRATION (Critical):
-    v6 used λ_turn = 0.10, producing 2.63% daily turnover (target was 14-18%).
-    The portfolio froze in BIL/SHV established during warmup.
-    
-    CALIBRATION DERIVATION:
-      Target turnover: 12-18% daily (vs 32% original, 2.63% overcorrected).
-      
-      At typical operating point:
-        α gradient ≈ 0.10-0.20 per weight unit (mean alpha amplitude)
-        Σ gradient ≈ λ_var × Σ × w ≈ 2.5 × 0.015 ≈ 0.04
-        Turn gradient at Δw=0.12: 2 × λ_turn × 0.12
-        
-      For turnover penalty to be 10-15% of alpha gradient:
-        2 × λ_turn × 0.12 ≈ 0.15 × 0.10 → λ_turn ≈ 0.06
-        
-      But with warm-start from prev_weights and near-optimal portfolio,
-      the gradient near convergence is small. The penalty becomes relatively
-      larger. Empirically calibrated: λ_turn = 0.008 gives ~12-15% turnover.
-      
-    NEW: λ_turn = 0.008 (was 0.10 — 12.5× reduction)
-    
-    REGIME SCALING PRESERVED:
-      equity_urgency > 0.7 → λ_turn = 0 (crisis: fast rebalancing)
-      equity_urgency > 0.4 → λ_turn × 0.4 (stress: reduced friction)
-      otherwise            → λ_turn base
+CHANGES FROM v9.1 (broken run):
 
-  ALPHA SIGNAL LOADING:
-    Now reads alpha_signals_blended.parquet which has corrected signals
-    (BIL/SHV near-zero, momentum included). The alpha_scale regime
-    adjustment is retained but with correct signal direction.
+CRITICAL FIXES:
+  1. Duplicate _mvo_weights removed — v9.3 (Ridge+quadratic CVaR) was dead code that
+     masked the real optimizer; now single clean definition.
+  2. GEX equity envelope (_gex_equity_cap) now reads from the separately loaded
+     gex_alpha.parquet — NOT from blended alpha. Previous code was feeding momentum
+     alpha into the equity cap, which had zero GEX information.
+  3. _wf_verdict logic fixed: the condition "IS dominated by structural event"
+     previously fired when avg_is < 0 AND avg_oos < 0, producing a false positive.
+     Now requires avg_oos > 0 to fire that branch.
 
-  MVO WARM-START IMPROVEMENT:
-    If the portfolio has drifted significantly from prev_weights during
-    a market move (‖current - prev_weights‖ > 0.15), the warm-start
-    uses equal weights instead of prev_weights. This prevents the
-    optimizer from being trapped in a stale solution.
+PARAMETER TUNING:
+  4. _LAMBDA_TURN raised 0.05 → 0.15, _LAMBDA_TURN_LOW raised 0.01 → 0.05.
+     At 0.05 the marginal alpha gain on a 5% daily trade outweighed the penalty.
+     Target: ~8-12% daily turnover (from 20%+).
+  5. _IC_RESUME_THRESHOLD raised 0.015 → 0.030. The prior threshold allowed
+     re-entry after brief IC spikes that reversed within days (false recoveries).
+  6. _EQUITY_TICKERS expanded to 14 assets, unified with precompute equity_set.
 
-  ALL OTHER FIXES PRESERVED:
-    BUG #21: Alpha/price date alignment
-    BUG #22: Regime-conditional halt thresholds
-    BUG #23: OAS covariance + ridge floor
-    BUG #24: Ramp-in DD from ramp_entry_nav
-    BUG #25: CVaR-augmented MVO for fat tails
-    Universe unification (25 tickers matching precompute)
+ARCHITECTURAL:
+  7. w_prev is synchronized with the _MIN_POSITION_WT floor before injection into
+     the optimizer, so the turnover penalty sees the same portfolio the backtest saw.
+  8. Dynamic covariance lookback: shrinks from 126d toward 42d as urgency rises.
+  9. IC measured strictly on equity domain (not cross-asset diluted).
 """
 from __future__ import annotations
 
@@ -59,24 +38,23 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-import scipy.optimize as sco
 import scipy.stats as stats
 from scipy.stats import norm
+import cvxpy as cp
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
-logger = logging.getLogger("StandaloneBacktest")
+logger = logging.getLogger("Ouroboros.StandaloneBacktest")
 
-# ── Paths ──────────────────────────────────────────────────────────────────────
-_CACHE_DIR  = Path("research/outputs/cache")
-_OUTPUT_DIR = Path("research/outputs")
-_TEARSHEET  = _OUTPUT_DIR / "backtest_tearsheet.csv"
-_WF_FOLDS   = _OUTPUT_DIR / "walk_forward_folds.csv"
-_STRESS_OUT = _OUTPUT_DIR / "sde_stress_test.json"
+_CACHE_DIR   = Path("research/outputs/cache")
+_OUTPUT_DIR  = Path("research/outputs")
+_TEARSHEET   = _OUTPUT_DIR / "backtest_tearsheet.csv"
+_WF_FOLDS    = _OUTPUT_DIR / "walk_forward_folds.csv"
+_STRESS_OUT  = _OUTPUT_DIR / "sde_stress_test.json"
+_GEX_CACHE   = _CACHE_DIR  / "gex_alpha.parquet"
 
-# ── Unified universe ───────────────────────────────────────────────────────────
 TICKERS: List[str] = [
     "SPY", "QQQ", "IWM", "TLT", "HYG", "LQD", "GLD", "SLV",
     "GDX", "XLE", "XLF", "XLK", "XLV", "XLU", "XLI", "XLP",
@@ -105,14 +83,26 @@ _HALT_RAMP_DAYS:        int   = 21
 _RAMP_DD_BUFFER:        float = 0.08
 _WARMUP_DAYS:           int   = 126
 _WF_WARMUP_DAYS:        int   = 21
-_REBALANCE_BAND:        float = 50e-4   # 50bps minimum trade size
+_REBALANCE_BAND:        float = 50e-4
 
 _LAMBDA_BASE:           float = 2.5
 _LAMBDA_CVAR_BASE:      float = 0.05
 _KURT_CVAR_SCALE:       float = 0.05
-# RECALIBRATED: 0.008 (was 0.10 — produced 2.63% daily turnover, 12.5× too high)
-# Target: 12-18% daily turnover. Empirically: 0.008 ≈ 14% turnover.
-_LAMBDA_TURN:           float = 0.008
+
+# FIX: Raised turnover penalty to bring daily turnover from ~20% to ~8-12%
+_LAMBDA_TURN:           float = 0.15    # was 0.05
+_LAMBDA_TURN_LOW:       float = 0.05    # was 0.01
+_SIGNAL_STRENGTH_FLOOR: float = 0.05
+_SIGNAL_STRENGTH_CEIL:  float = 0.15
+_SIGNAL_STRENGTH_WIN:   int   = 21
+
+_ROLLING_IC_WIN:         int   = 21
+_IC_NEGATIVE_THRESHOLD:  float = -0.01
+
+_IC_HALT_THRESHOLD:      float = -0.025
+_IC_HALT_MIN_DAYS:       int   = 15
+# FIX: Raised resume threshold — requires genuine recovery, not brief IC spike
+_IC_RESUME_THRESHOLD:    float = 0.030   # was 0.015
 
 _COV_WINDOW:            int   = 126
 _MIN_POSITION_WT:       float = 0.015
@@ -123,10 +113,20 @@ _BASE_SPREAD_BPS:       float = 1.0
 _TRADING_DAYS_YEAR:     int   = 252
 _MAX_DD_HALT_FALLBACK:  float = 0.20
 
+_TECH_TICKERS:     List[str] = ["QQQ", "XLK", "XLC"]
+# FIX: Expanded to 14 assets — unified with precompute _EQUITY_SET
+_EQUITY_TICKERS:   List[str] = [
+    "SPY", "QQQ", "IWM", "XLK", "XLF", "XLV", "XLU", "XLI", "XLP",
+    "XLY", "XLB", "XLC", "COWZ", "XLE",
+]
+_MAX_TECH_WEIGHT:   float = 0.30
+_MAX_EQUITY_WEIGHT: float = 0.65
+
+_TECH_IDX   = [TICKERS.index(t) for t in _TECH_TICKERS   if t in TICKERS]
+_EQUITY_IDX = [TICKERS.index(t) for t in _EQUITY_TICKERS if t in TICKERS]
+
 _SOFT_COLS = ["soft_crisis", "soft_bear", "soft_bull", "soft_low_vol"]
 
-
-# ── Utilities ──────────────────────────────────────────────────────────────────
 
 def _normalize_index(df: pd.DataFrame) -> pd.DataFrame:
     idx = pd.to_datetime(df.index)
@@ -180,17 +180,15 @@ class RegimeSignalSmoother:
         confirmed = self._label if self._label_cnt >= _REGIME_PERSIST_DAYS else "neutral"
         return self._ema.copy(), confirmed
 
-_EMA_SPAN = 8
-
 
 def _cov(window: pd.DataFrame) -> np.ndarray:
-    from sklearn.covariance import OAS  # type: ignore
+    from sklearn.covariance import OAS
     data = window.reindex(columns=TICKERS).fillna(0.0).values
     if data.shape[0] < 10:
         return np.eye(N_ASSETS) * 1e-4
     try:
-        oas = OAS().fit(data)
-        Σ   = oas.covariance_
+        oas  = OAS().fit(data)
+        Σ    = oas.covariance_
         cond = np.linalg.cond(Σ)
         if cond > 1e4:
             eps = float(np.diag(Σ).mean()) * 1e-3
@@ -222,7 +220,7 @@ def _get_regime_halt_threshold(
 
 
 def _wf_folds(dates: pd.DatetimeIndex) -> List[Tuple[str, str, str, str]]:
-    from dateutil.relativedelta import relativedelta  # type: ignore
+    from dateutil.relativedelta import relativedelta
     folds = []
     ptr = dates[0] + relativedelta(months=12)
     while ptr + relativedelta(months=6) <= dates[-1]:
@@ -237,191 +235,241 @@ def _wf_folds(dates: pd.DatetimeIndex) -> List[Tuple[str, str, str, str]]:
 
 
 def _wf_verdict(avg_is: float, avg_oos: float) -> str:
+    # FIX: Previous code fired "IS dominated by structural event; OOS positive"
+    # when avg_is < 0 AND avg_oos was ALSO negative — a diagnostic lie.
+    # Now correctly requires avg_oos > 0 for that branch.
     if avg_oos > 0.5:  return "✅ Strong positive OOS signal"
     if avg_oos > 0.2:  return "⚠️  Modest OOS signal"
     if avg_oos > 0.0:  return "⚠️  Weak OOS signal"
-    if avg_is < 0:     return "❌ IS dominated by structural event; OOS signal positive"
+    if avg_is < 0 and avg_oos > 0:
+        return "❌ IS dominated by structural event; OOS signal positive"
     return "❌ Systematic OOS failure"
 
 
-# ── MVO with recalibrated turnover penalty ────────────────────────────────────
+def _adaptive_lambda_turn(signal_strength: float, rolling_ic: float = 0.0) -> float:
+    if np.isnan(signal_strength): signal_strength = _SIGNAL_STRENGTH_CEIL
+    if np.isnan(rolling_ic): rolling_ic = 0.0
+
+    # If IC is bleeding, force freeze — do not chase stale signals
+    if rolling_ic < 0.0:
+        return _LAMBDA_TURN * 2.0
+
+    # Weak signal: enforce high friction to prevent Markowitz Ping-Pong
+    if signal_strength <= _SIGNAL_STRENGTH_FLOOR:
+        return _LAMBDA_TURN * 1.5
+
+    # High conviction + positive IC: allow slightly faster rotation
+    if signal_strength >= _SIGNAL_STRENGTH_CEIL:
+        return _LAMBDA_TURN_LOW
+
+    t = (signal_strength - _SIGNAL_STRENGTH_FLOOR) / (
+        _SIGNAL_STRENGTH_CEIL - _SIGNAL_STRENGTH_FLOOR
+    )
+    return (_LAMBDA_TURN * 1.5) - t * ((_LAMBDA_TURN * 1.5) - _LAMBDA_TURN_LOW)
+
+
+def _gex_equity_cap(gex_zscore: float, base_cap: float = _MAX_EQUITY_WEIGHT) -> float:
+    """
+    Expand or contract the equity weight envelope based on aggregate dealer
+    gamma positioning (GEX z-score from the raw gex_alpha.parquet).
+
+    GEX > +1σ: dealers gamma-long, market pinned → expand equity budget
+    GEX < -1σ: dealers gamma-short, gap risk elevated → contract budget
+
+    This is the CORRECT injection point for GEX: it controls HOW MUCH equity
+    the optimizer can hold, while Momentum+LowVol (in the alpha vector) control
+    WHICH equities to prefer within that budget.
+    """
+    if np.isnan(gex_zscore): gex_zscore = 0.0
+    delta = float(np.clip(gex_zscore * 0.05, -0.15, 0.15))
+    return float(np.clip(base_cap + delta, 0.30, 0.80))
+
 
 def _mvo_weights(
-    alpha:          np.ndarray,
-    cov_d:          np.ndarray,
-    z0_smooth:      float,
-    vol_d:          np.ndarray,
-    prev_weights:   np.ndarray,
-    equity_urgency: float = 0.0,
-    return_window:  Optional[np.ndarray] = None,
+    alpha:           np.ndarray,
+    cov_d:           np.ndarray,
+    z0_smooth:       float,
+    vol_d:           np.ndarray,
+    prev_weights:    np.ndarray,
+    equity_urgency:  float = 0.0,
+    return_window:   Optional[np.ndarray] = None,
+    signal_strength: float = 0.10,
+    rolling_ic:      float = 0.0,
+    gex_alpha:       Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """
-    CVaR-Augmented MVO with recalibrated quadratic turnover penalty.
+    CVXPY-driven CVaR-MVO. v9.6 — single authoritative definition.
 
-    TURNOVER PENALTY RECALIBRATION:
-      λ_turn = 0.008 (was 0.10 in v6 — 12.5× too high).
-      
-      At λ_turn = 0.008 and Δw = 0.12 (12% daily rebalance):
-        Turn gradient = 2 × 0.008 × 0.12 = 0.0019
-        Alpha gradient (mean) ≈ 0.10-0.20
-        Ratio: 0.0019 / 0.15 ≈ 1.3%
-      
-      This allows meaningful rebalancing in response to signal changes
-      while still dampening high-frequency noise-driven churn.
-      
-      Expected outcome: 12-18% daily turnover (vs 32% without penalty,
-      2.63% with v6 overcalibration).
-
-    WARM-START IMPROVEMENT:
-      If current portfolio has drifted significantly from prev_weights
-      (due to market moves between rebalances), reset warm-start to
-      equal weights. This prevents optimizer getting trapped in a stale
-      local minimum when the market has moved 10%+ since last rebalance.
+    Key design decisions:
+    - No Ridge penalty: Ridge fights concentration, which is what GEX is asking
+      for in Mag7 regimes. Turnover is controlled by _LAMBDA_TURN alone.
+    - Linear CVaR penalty: fixes the quadratic squaring bug from v9.3.
+    - Dynamic equity cap: driven by actual GEX z-score (gex_alpha parameter),
+      not blended alpha mean.
+    - w_prev synchronized with _MIN_POSITION_WT floor so the optimizer's prior
+      matches the actual portfolio state.
     """
-    avg_vol  = float(np.mean(vol_d) * np.sqrt(_TRADING_DAYS_YEAR))
-    lam_var  = float(np.clip(_LAMBDA_BASE * np.exp(avg_vol * abs(z0_smooth)), 0.5, 15.0))
-    Σ        = cov_d * _TRADING_DAYS_YEAR
-    mx       = np.array([TIER_MAX_WEIGHT.get(t, 0.15) for t in TICKERS])
-    w_prev   = np.clip(prev_weights, 0.0, 1.0)
+    z0_smooth = 0.0 if np.isnan(z0_smooth) else z0_smooth
 
-    # Regime-scaled turnover penalty
+    avg_vol = float(np.nanmean(vol_d) * np.sqrt(_TRADING_DAYS_YEAR))
+    if np.isnan(avg_vol): avg_vol = 0.15
+
+    lam_var = float(np.clip(_LAMBDA_BASE * np.exp(avg_vol * abs(z0_smooth)), 0.5, 15.0))
+    if np.isnan(lam_var): lam_var = _LAMBDA_BASE
+
+    Σ  = cov_d * _TRADING_DAYS_YEAR
+    mx = np.array([TIER_MAX_WEIGHT.get(t, 0.15) for t in TICKERS])
+
+    # FIX: Synchronize w_prev with the _MIN_POSITION_WT floor so the turnover
+    # penalty sees the same sparse portfolio the rebalance step will produce.
+    w_prev = np.clip(prev_weights, 0.0, 1.0)
+    w_prev = np.where(w_prev < _MIN_POSITION_WT, 0.0, w_prev)
+    s_prev = w_prev.sum()
+    if s_prev > 1e-10:
+        w_prev /= s_prev
+
+    base_lam_turn = _adaptive_lambda_turn(signal_strength, rolling_ic)
+    if np.isnan(base_lam_turn): base_lam_turn = _LAMBDA_TURN
+
+    if np.isnan(equity_urgency): equity_urgency = 0.0
     if equity_urgency > 0.7:
-        lam_turn = 0.0
+        lam_turn = 0.0            # Crisis: free rebalance to defensive
     elif equity_urgency > 0.4:
-        lam_turn = _LAMBDA_TURN * 0.4
+        lam_turn = base_lam_turn * 0.4
     else:
-        lam_turn = _LAMBDA_TURN
+        lam_turn = base_lam_turn
 
-    # Smart warm-start: use prev_weights unless significantly drifted
-    drift = float(np.abs(w_prev - w_prev.mean()).max())
-    if w_prev.sum() > 0.5 and drift < 0.25:
-        x0 = np.clip(w_prev, 0.0, mx)
-        s  = x0.sum()
-        x0 = x0 / s if s > 1e-6 else np.clip(np.full(N_ASSETS, 1.0 / N_ASSETS), 0.0, mx)
-        x0 /= (x0.sum() + 1e-10)
+    eigenvalues, eigenvectors = np.linalg.eigh(Σ)
+    eigenvalues = np.maximum(eigenvalues, 1e-8)
+    Σ_psd = eigenvectors @ np.diag(eigenvalues) @ eigenvectors.T
+
+    # Dynamic tech concentration cap (momentum-driven, not GEX-driven)
+    tech_alpha = np.mean(alpha[_TECH_IDX])
+    univ_alpha = np.mean(alpha)
+    dynamic_tech_cap = _MAX_TECH_WEIGHT
+    if tech_alpha > univ_alpha * 2.0 and tech_alpha > 0.02:
+        dynamic_tech_cap = 0.45
+
+    # FIX: Dynamic equity cap — driven by actual GEX z-score from gex_alpha.parquet.
+    # Previously read from blended alpha which had zero GEX information.
+    if gex_alpha is not None and len(gex_alpha) == N_ASSETS:
+        equity_gex_vals = gex_alpha[_EQUITY_IDX]
+        # Normalize to z-score range: gex_alpha values are already tanh-bounded,
+        # so their mean gives a [-1, +1] signal of aggregate dealer positioning.
+        gex_zscore = float(np.nanmean(equity_gex_vals))
     else:
-        # Portfolio has drifted significantly — reset to equal weights
-        x0 = np.clip(np.full(N_ASSETS, 1.0 / N_ASSETS), 0.0, mx)
-        x0 /= (x0.sum() + 1e-10)
+        gex_zscore = 0.0
+    dynamic_eq_cap = _gex_equity_cap(gex_zscore, _MAX_EQUITY_WEIGHT)
 
-    # CVaR penalty weight
     use_cvar = (
         return_window is not None and
         return_window.shape[0] >= 30 and
         return_window.shape[1] == N_ASSETS
     )
-    if use_cvar:
-        ew_rets     = return_window @ x0
-        excess_kurt = float(stats.kurtosis(ew_rets, fisher=True))
-        lam_cvar    = float(np.clip(
-            _LAMBDA_CVAR_BASE * max(excess_kurt - 3.0, 0.0) *
-            _KURT_CVAR_SCALE  * max(excess_kurt - 3.0, 0.0),
-            0.0, 10.0,
-        ))
-    else:
-        lam_cvar = 0.0
 
-    # CVaR + turnover augmented objective
+    lam_cvar = 0.0
+    if use_cvar:
+        drift = float(np.abs(w_prev - w_prev.mean()).max())
+        if w_prev.sum() > 0.5 and drift < 0.25:
+            x0 = np.clip(w_prev, 0.0, mx)
+        else:
+            x0 = np.clip(np.full(N_ASSETS, 1.0 / N_ASSETS), 0.0, mx)
+        x0 /= (x0.sum() + 1e-10)
+
+        ew_rets = return_window @ x0
+
+        with np.errstate(invalid="ignore", divide="ignore"):
+            excess_kurt = float(stats.kurtosis(ew_rets, fisher=True))
+        if np.isnan(excess_kurt):
+            excess_kurt = 0.0
+
+        # FIX: Linear CVaR penalty (previous v9.3 had quadratic squaring bug:
+        # _LAMBDA_CVAR_BASE * max(k-3,0) * _KURT_CVAR_SCALE * max(k-3,0)
+        # which collapsed to 0.0025*(k-3)^2, activating only for kurtosis > 6
+        # and then jumping discontinuously)
+        lam_cvar = float(np.clip(
+            _LAMBDA_CVAR_BASE * _KURT_CVAR_SCALE * max(excess_kurt, 0.0),
+            0.0, 1.0,
+        ))
+        if np.isnan(lam_cvar): lam_cvar = 0.0
+
+    w = cp.Variable(N_ASSETS)
+
+    constraints = [
+        cp.sum(w) == 1.0,
+        w >= 0.0,
+        w <= mx,
+        cp.sum(w[_TECH_IDX])   <= dynamic_tech_cap,
+        cp.sum(w[_EQUITY_IDX]) <= dynamic_eq_cap,   # GEX-driven envelope
+    ]
+
+    safe_alpha = np.nan_to_num(alpha, nan=0.0)
+    expected_return    = safe_alpha.T @ w
+    portfolio_variance = cp.quad_form(w, cp.psd_wrap(Σ_psd))
+    turnover_penalty   = cp.sum_squares(w - w_prev)
+
     if use_cvar and lam_cvar > 0.01:
         T_obs      = return_window.shape[0]
         alpha_conf = 0.95
         inv_tail   = 1.0 / max(int(np.floor((1 - alpha_conf) * T_obs)), 1)
 
-        def _obj_full(x_full: np.ndarray) -> float:
-            w_    = x_full[:N_ASSETS]
-            zeta_ = x_full[N_ASSETS]
-            losses   = -return_window @ w_
-            excess   = np.maximum(losses - zeta_, 0.0)
-            cvar_val = zeta_ + inv_tail * excess.sum()
-            return float(
-                0.5 * lam_var * w_ @ Σ @ w_
-                - alpha @ w_
-                + lam_cvar * cvar_val
-                + lam_turn * np.sum((w_ - w_prev) ** 2)
-            )
+        zeta = cp.Variable()
+        z    = cp.Variable(T_obs)
 
-        def _jac_full(x_full: np.ndarray) -> np.ndarray:
-            w_    = x_full[:N_ASSETS]
-            zeta_ = x_full[N_ASSETS]
-            losses      = -return_window @ w_
-            active_mask = (losses > zeta_).astype(float)
-            g_cvar_w    = lam_cvar * (-return_window.T @ active_mask) * inv_tail
-            g_cvar_z    = lam_cvar * (1.0 - inv_tail * active_mask.sum())
-            g_w = lam_var * (Σ @ w_) - alpha + g_cvar_w + 2.0 * lam_turn * (w_ - w_prev)
-            return np.append(g_w, g_cvar_z)
+        safe_returns = np.nan_to_num(return_window, nan=0.0)
+        constraints.extend([z >= 0, z >= -safe_returns @ w - zeta])
+        cvar_loss = zeta + inv_tail * cp.sum(z)
 
-        bds_full  = [(0.0, float(m)) for m in mx] + [(-0.5, 0.5)]
-        ew_losses = -return_window @ x0
-        zeta0     = float(np.percentile(ew_losses, alpha_conf * 100))
-
-        res = sco.minimize(
-            fun=_obj_full, jac=_jac_full,
-            x0=np.append(x0, zeta0),
-            method="SLSQP", bounds=bds_full,
-            constraints=[{
-                "type": "eq",
-                "fun":  lambda x: x[:N_ASSETS].sum() - 1.0,
-                "jac":  lambda x: np.append(np.ones(N_ASSETS), 0.0),
-            }],
-            options={"ftol": 1e-9, "maxiter": 500},
+        objective = cp.Maximize(
+            expected_return
+            - (0.5 * lam_var * portfolio_variance)
+            - (lam_cvar * cvar_loss)
+            - (lam_turn * turnover_penalty)
         )
-        if res.success:
-            w = res.x[:N_ASSETS]
-            w = np.clip(w, 0.0, mx)
-            s = w.sum()
-            w = w / s if s > 1e-10 else x0
-            w[w < _MIN_POSITION_WT] = 0.0
-            s = w.sum()
-            if s > 1e-10:
-                w /= s
-            return w.astype(np.float32)
-
-    # Pure MVO + turnover penalty
-    def _obj_mvo(w: np.ndarray) -> float:
-        return 0.5 * lam_var * w @ Σ @ w - alpha @ w + lam_turn * np.sum((w - w_prev) ** 2)
-
-    def _jac_mvo(w: np.ndarray) -> np.ndarray:
-        return lam_var * (Σ @ w) - alpha + 2.0 * lam_turn * (w - w_prev)
-
-    bds = [(0.0, float(m)) for m in mx]
-    res = sco.minimize(
-        fun=_obj_mvo, jac=_jac_mvo, x0=x0,
-        method="SLSQP", bounds=bds,
-        constraints=[{"type": "eq", "fun": lambda w: w.sum() - 1.0}],
-        options={"ftol": 1e-9, "maxiter": 500},
-    )
-
-    if res.success:
-        w = res.x
     else:
-        inv_vol = 1.0 / (np.diag(Σ) ** 0.5 + 1e-8)
+        objective = cp.Maximize(
+            expected_return
+            - (0.5 * lam_var * portfolio_variance)
+            - (lam_turn * turnover_penalty)
+        )
+
+    prob = cp.Problem(objective, constraints)
+
+    try:
+        prob.solve(solver=cp.ECOS, warm_start=True)
+        if prob.status in ["optimal", "optimal_inaccurate"] and w.value is not None:
+            w_val = w.value
+        else:
+            raise cp.SolverError(f"Status: {prob.status}")
+    except Exception as e:
+        logger.debug(f"CVXPY fallback required: {e}")
+        inv_vol = 1.0 / (np.diag(Σ_psd) ** 0.5 + 1e-8)
         inv_vol = np.minimum(inv_vol, mx * 3)
-        w = inv_vol / (inv_vol.sum() + 1e-10)
+        w_val   = inv_vol / (inv_vol.sum() + 1e-10)
 
-    w = np.clip(w, 0.0, mx)
-    s = w.sum()
-    w = w / s if s > 1e-10 else np.where(mx > 0, 1.0 / max((mx > 0).sum(), 1), 0.0)
-    w[w < _MIN_POSITION_WT] = 0.0
-    s = w.sum()
+    w_val = np.clip(w_val, 0.0, mx)
+    w_val = np.where(w_val < _MIN_POSITION_WT, 0.0, w_val)
+    s = w_val.sum()
     if s > 1e-10:
-        w /= s
-    return w.astype(np.float32)
+        w_val /= s
+    else:
+        w_val = np.where(mx > 0, 1.0 / max((mx > 0).sum(), 1), 0.0)
 
+    return w_val.astype(np.float32)
 
-# ── Data containers ────────────────────────────────────────────────────────────
 
 @dataclass
 class Snap:
-    date:          str
+    date:            str
     portfolio_value: float
-    daily_return:  float
-    cash:          float
-    turnover:      float
-    cost_drag:     float
-    regime_label:  str
-    z_mu_0:        float
-    drawdown:      float
-    alloc_pct:     int
+    daily_return:    float
+    cash:            float
+    turnover:        float
+    cost_drag:       float
+    regime_label:    str
+    z_mu_0:          float
+    drawdown:        float
+    alloc_pct:       int
 
 
 @dataclass
@@ -431,8 +479,6 @@ class WFFold:
     is_sharpe: float; oos_sharpe: float
     oos_cagr: float; oos_max_dd: float
 
-
-# ── Backtester ─────────────────────────────────────────────────────────────────
 
 class StandaloneBacktester:
 
@@ -452,6 +498,8 @@ class StandaloneBacktester:
         self._prev_weights    = np.zeros(N_ASSETS, dtype=np.float64)
         self._prev_dd         = 0.0
         self._prev_dd_vel     = 0.0
+        self._ic_below_days:  int  = 0
+        self._ic_halted:      bool = False
 
     def _current_weights(self, px: np.ndarray) -> np.ndarray:
         vals  = np.array([self.pos.get(t, 0.0) * px[i] for i, t in enumerate(TICKERS)])
@@ -473,9 +521,9 @@ class StandaloneBacktester:
             self.cash  -= dollar
 
     def _mtm(self, px: np.ndarray) -> float:
-        equity   = sum(self.pos.get(t, 0.0) * px[i] for i, t in enumerate(TICKERS))
-        new_nav  = self.cash + equity
-        dr       = (new_nav - self.nav) / (self.nav + 1e-10)
+        equity  = sum(self.pos.get(t, 0.0) * px[i] for i, t in enumerate(TICKERS))
+        new_nav = self.cash + equity
+        dr      = (new_nav - self.nav) / (self.nav + 1e-10)
         self.nav = new_nav
         self._peak = max(self._peak, new_nav)
         return dr
@@ -500,8 +548,8 @@ class StandaloneBacktester:
             shares = dol / (px[i] + 1e-10)
             c      = abs(dol) * (_ac_cost_bps(shares, vol[i], adv[i]) + _BASE_SPREAD_BPS) / 10_000
             cost  += c
-            self.cash    += -dol - c
-            self.pos[t]   = self.pos.get(t, 0.0) + shares
+            self.cash   += -dol - c
+            self.pos[t]  = self.pos.get(t, 0.0) + shares
         cost_drag_frac   = cost / (self.nav + 1e-10)
         one_way_turnover = float(0.5 * np.sum(np.abs(target - current)))
         self._prev_weights = target.copy().astype(np.float64)
@@ -513,6 +561,7 @@ class StandaloneBacktester:
         returns_df:  pd.DataFrame,
         regime_df:   pd.DataFrame,
         alpha_df:    pd.DataFrame,
+        gex_df:      pd.DataFrame,
         start_date:  str,
         end_date:    str,
         warmup_days: int = _WARMUP_DAYS,
@@ -536,18 +585,54 @@ class StandaloneBacktester:
         full_dates       = all_dates[warmup_start_idx:]
         record_start     = sim_dates[0]
 
+        alpha_abs_mean = (
+            alpha_df.reindex(full_dates)
+            .abs().mean(axis=1)
+            .rolling(_SIGNAL_STRENGTH_WIN, min_periods=5)
+            .mean()
+            .fillna(_SIGNAL_STRENGTH_CEIL)
+        )
+
+        _alpha_arr   = alpha_df.reindex(full_dates).reindex(columns=TICKERS).fillna(0.0)
+        _ret_arr     = returns_df.reindex(full_dates).reindex(columns=TICKERS).fillna(0.0)
+        _ic_series   = pd.Series(np.nan, index=full_dates)
+
+        # IC measured strictly on the equity domain — non-equity momentum
+        # contamination was diluting the IC and triggering false halts
+        equity_mask = np.array([t in set(_EQUITY_TICKERS) for t in TICKERS])
+
+        for _i in range(1, len(full_dates)):
+            _alpha_t  = _alpha_arr.iloc[_i - 1].values
+            _return_t = _ret_arr.iloc[_i].values
+            _active   = np.abs(_alpha_t) > 0.005
+            active_eq = _active & equity_mask
+            if active_eq.sum() >= 3:
+                from scipy.stats import spearmanr as _spearmanr
+                _ic, _ = _spearmanr(_alpha_t[active_eq], _return_t[active_eq])
+                if np.isfinite(_ic):
+                    _ic_series.iloc[_i] = _ic
+
+        rolling_ic_series = (
+            _ic_series
+            .rolling(_ROLLING_IC_WIN, min_periods=5)
+            .mean()
+            .fillna(0.0)
+        )
+
         for date in full_dates:
             record = date >= record_start
             ds     = str(date.date())
             gi     = prices_df.index.get_loc(date)
             px     = prices_df.iloc[gi].reindex(TICKERS).fillna(1.0).values.astype(np.float64)
 
+            sig_strength = float(alpha_abs_mean.get(date, _SIGNAL_STRENGTH_CEIL))
+            roll_ic      = float(rolling_ic_series.get(date, 0.0))
+
             if date not in regime_df.index or date not in alpha_df.index:
                 if record:
                     self.history.append(Snap(ds, self.nav, 0.0, self.cash, 0.0, 0.0, "NO_SIGNAL", 0.0, 0.0, 0))
                 continue
 
-            # Regime signal
             raw_z = regime_df.loc[date, "z_mu"]
             if isinstance(raw_z, str):
                 import ast; raw_z = ast.literal_eval(raw_z)
@@ -557,12 +642,20 @@ class StandaloneBacktester:
 
             regime_row     = regime_df.loc[date]
             equity_urgency = float(regime_row.get("ltc_urgency", abs(z0) / 4.0))
+            if np.isnan(equity_urgency): equity_urgency = 0.0
+
+            # Load raw GEX alpha for equity envelope (separate from blended alpha)
+            gex_alp = (
+                gex_df.loc[date].reindex(TICKERS).fillna(0.0).values.astype(np.float64)
+                if date in gex_df.index else np.zeros(N_ASSETS, dtype=np.float64)
+            )
 
             halt_dd_thresh, halt_days_req, ramp_days_req = _get_regime_halt_threshold(regime_df, date)
 
-            # ══════════════════════════════════════════════════════════════════
-            # HALT STATE MACHINE
-            # ══════════════════════════════════════════════════════════════════
+            # Dynamic covariance lookback: shrink toward 42d during high urgency
+            eff_cov_window = int(_COV_WINDOW * (1.0 - 0.5 * equity_urgency))
+            eff_cov_window = max(eff_cov_window, 42)
+
             if self._halt_phase >= 1:
                 self._halt_days += 1
                 dd_from_peak = (self.nav - self._peak) / self._peak if self._peak > 0 else 0.0
@@ -579,16 +672,18 @@ class StandaloneBacktester:
 
                 elif self._halt_phase == 2:
                     self._ramp_days += 1
-                    scale = min(float(self._ramp_days) / ramp_days_req, 1.0)
-
-                    cov_d = _cov(returns_df.iloc[max(0, gi - _COV_WINDOW):gi])
-                    vol_d = returns_df.iloc[max(0, gi - 21):gi].reindex(columns=TICKERS).std(axis=0).fillna(0.01).values.astype(np.float64)
-                    adv   = np.maximum(10_000_000.0 / (px + 1e-10), 1.0)
-                    alp   = alpha_df.loc[date].reindex(TICKERS).fillna(0.0).values.astype(np.float64)
+                    scale     = min(float(self._ramp_days) / ramp_days_req, 1.0)
+                    cov_d     = _cov(returns_df.iloc[max(0, gi - eff_cov_window):gi])
+                    vol_d     = returns_df.iloc[max(0, gi - 21):gi].reindex(columns=TICKERS).std(axis=0).fillna(0.01).values.astype(np.float64)
+                    adv       = np.maximum(10_000_000.0 / (px + 1e-10), 1.0)
+                    alp       = alpha_df.loc[date].reindex(TICKERS).fillna(0.0).values.astype(np.float64)
                     ret_window = returns_df.iloc[max(0, gi - _COV_WINDOW):gi].reindex(columns=TICKERS).fillna(0.0).values
 
-                    target = _mvo_weights(alp, cov_d, z0, vol_d, self._prev_weights, equity_urgency,
-                                          ret_window if ret_window.shape[0] >= 30 else None)
+                    target = _mvo_weights(
+                        alp, cov_d, z0, vol_d, self._prev_weights, equity_urgency,
+                        ret_window if ret_window.shape[0] >= 30 else None,
+                        signal_strength=sig_strength, rolling_ic=roll_ic, gex_alpha=gex_alp,
+                    )
                     target_scaled = target * scale
                     target_scaled[TICKERS.index("BIL")] += (1.0 - scale) * 0.60
                     target_scaled[TICKERS.index("SHV")] += (1.0 - scale) * 0.40
@@ -604,7 +699,7 @@ class StandaloneBacktester:
                     elif self._ramp_days >= ramp_days_req:
                         logger.info(f"{ds}: Ramp-in complete. Resuming full active trading.")
                         self._halt_phase = 0
-                        self._peak = self.nav  # reset HWM
+                        self._peak = self.nav
 
                     if record:
                         self.history.append(Snap(ds, self.nav, dr, self.cash, to, cost_d, f"RAMP_{scale:.0%}", z0, dd_from_peak, 2))
@@ -614,35 +709,62 @@ class StandaloneBacktester:
                     self.history.append(Snap(ds, self.nav, dr, self.cash, 0.0, 0.0, "HALTED_BIL", z0, dd_from_peak, self._halt_phase))
                 continue
 
-            # ══════════════════════════════════════════════════════════════════
-            # ACTIVE TRADING
-            # ══════════════════════════════════════════════════════════════════
-            cov_d = _cov(returns_df.iloc[max(0, gi - _COV_WINDOW):gi])
+            cov_d = _cov(returns_df.iloc[max(0, gi - eff_cov_window):gi])
             vol_d = returns_df.iloc[max(0, gi - 21):gi].reindex(columns=TICKERS).std(axis=0).fillna(0.01).values.astype(np.float64)
             adv   = np.maximum(10_000_000.0 / (px + 1e-10), 1.0)
+
+            if roll_ic < _IC_HALT_THRESHOLD:
+                self._ic_below_days += 1
+            else:
+                self._ic_below_days = 0
+
+            if not self._ic_halted and self._ic_below_days >= _IC_HALT_MIN_DAYS:
+                self._ic_halted = True
+                logger.info(
+                    f"{ds}: IC-DECAY HALT — rolling_IC={roll_ic:+.4f} below "
+                    f"{_IC_HALT_THRESHOLD} for {self._ic_below_days}d. Moving to BIL."
+                )
+                self._liquidate(px)
+                self._invest_bil(px)
+
+            if self._ic_halted:
+                # FIX: Raised resume threshold 0.015 → 0.030 to prevent rapid halt/resume
+                # cycling on brief IC recoveries that reverse within days.
+                if roll_ic >= _IC_RESUME_THRESHOLD:
+                    self._ic_halted = False
+                    self._ic_below_days = 0
+                    logger.info(
+                        f"{ds}: IC-DECAY RESUME — rolling_IC={roll_ic:+.4f} ≥ "
+                        f"{_IC_RESUME_THRESHOLD:.3f}. Resuming active trading."
+                    )
+                else:
+                    dr = self._mtm(px)
+                    if record:
+                        self.history.append(Snap(ds, self.nav, dr, self.cash, 0.0, 0.0, "IC_HALTED_BIL", z0, (self.nav - self._peak) / self._peak, 0))
+                    continue
 
             has_soft      = all(c in regime_df.columns for c in _SOFT_COLS)
             crisis_weight = (
                 float(regime_row.get("soft_crisis", 0.0)) + float(regime_row.get("soft_bear", 0.0))
                 if has_soft else float(np.clip(equity_urgency, 0.0, 1.0))
             )
-            # Attenuate alpha in crisis — maximum 50% reduction (was 60%)
-            # Reduced to preserve more signal in mild stress periods
             alpha_scale = 1.0 - 0.50 * crisis_weight
             alp = alpha_df.loc[date].reindex(TICKERS).fillna(0.0).values.astype(np.float64) * alpha_scale
 
             ret_window = returns_df.iloc[max(0, gi - _COV_WINDOW):gi].reindex(columns=TICKERS).fillna(0.0).values
-            target = _mvo_weights(alp, cov_d, z0, vol_d, self._prev_weights, equity_urgency,
-                                   ret_window if ret_window.shape[0] >= 30 else None)
+            target = _mvo_weights(
+                alp, cov_d, z0, vol_d, self._prev_weights, equity_urgency,
+                ret_window if ret_window.shape[0] >= 30 else None,
+                signal_strength=sig_strength, rolling_ic=roll_ic, gex_alpha=gex_alp,
+            )
 
-            # Dynamic risk-tier scaling
-            dd     = (self.nav - self._peak) / self._peak if self._peak > 0 else 0.0
-            dd_vel = dd - self._prev_dd
+            dd      = (self.nav - self._peak) / self._peak if self._peak > 0 else 0.0
+            dd_vel  = dd - self._prev_dd
             dd_accel = dd_vel - self._prev_dd_vel
             self._prev_dd = dd; self._prev_dd_vel = dd_vel
 
             velocity_adj = float(np.clip(dd_accel / 0.001, -0.05, 0.05))
-            _RISK_TIERS = [
+            _RISK_TIERS  = [
                 (0.22 + velocity_adj, 0.00),
                 (0.18 + velocity_adj, 0.15),
                 (0.13 + velocity_adj, 0.40),
@@ -675,7 +797,6 @@ class StandaloneBacktester:
             if record:
                 self.history.append(Snap(ds, self.nav, dr, self.cash, to, cost_d, s_label, z0, dd, int(scale * 100)))
 
-        # ── Tearsheet computation ──────────────────────────────────────────────
         if not self.history:
             return pd.DataFrame()
 
@@ -707,9 +828,10 @@ class StandaloneBacktester:
         hit      = float((r > rf).mean())
         avg_turn = float(df["turnover"].mean())
         cost_drag = float(df["cost_drag"].mean() * _TRADING_DAYS_YEAR * 1e4)
-        active_pct = float((~df["regime_label"].isin(["WARMUP", "NO_SIGNAL", "HALTED_BIL"]) &
+        active_pct = float((~df["regime_label"].isin(["WARMUP", "NO_SIGNAL", "HALTED_BIL", "IC_HALTED_BIL"]) &
                             ~df["regime_label"].str.startswith("RAMP")).mean() * 100)
-        halt_pct   = float((df["regime_label"] == "HALTED_BIL").mean() * 100)
+        halt_pct    = float((df["regime_label"] == "HALTED_BIL").mean() * 100)
+        ic_halt_pct = float((df["regime_label"] == "IC_HALTED_BIL").mean() * 100)
 
         for label, val in [
             ("CAGR",                  f"{cagr_val:+.2%}"),
@@ -729,6 +851,7 @@ class StandaloneBacktester:
             ("Excess Kurtosis",       f"{kurt_val:.3f}"),
             ("Active Trading %",      f"{active_pct:.1f}%"),
             ("Halted BIL %",          f"{halt_pct:.1f}%"),
+            ("IC Decay Halt %",       f"{ic_halt_pct:.1f}%"),
             ("Final NAV",             f"${nav[-1]:,.2f}"),
             ("Trading Days",          f"{n}"),
         ]:
@@ -737,17 +860,22 @@ class StandaloneBacktester:
         return df
 
 
-# ── Entry point ────────────────────────────────────────────────────────────────
-
 def main() -> None:
-    logger.info("══════ Fortress v5 — Standalone Backtest v7 (λ_turn RECALIBRATION) ══════")
+    logger.info("══════ Fortress v5 — Standalone Backtest v9.6 (GEX ENVELOPE + UNIFIED) ══════")
 
     prices_df  = _normalize_index(pd.read_parquet(_CACHE_DIR / "prices_wide.parquet"))
     returns_df = _normalize_index(pd.read_parquet(_CACHE_DIR / "returns_wide.parquet"))
     regime_df  = _normalize_index(pd.read_parquet(_CACHE_DIR / "regime_posteriors.parquet"))
     alpha_df   = _normalize_index(pd.read_parquet(_CACHE_DIR / "alpha_signals_blended.parquet"))
 
-    # Universe validation
+    if not _GEX_CACHE.exists():
+        logger.error(
+            f"GEX alpha cache missing: {_GEX_CACHE}\n"
+            "  Re-run precompute_alpha_signals.py (v14+) to generate it."
+        )
+        sys.exit(1)
+    gex_df = _normalize_index(pd.read_parquet(_GEX_CACHE))
+
     alpha_cols = set(alpha_df.columns)
     missing    = set(TICKERS) - alpha_cols
     if missing:
@@ -757,43 +885,20 @@ def main() -> None:
     prices_df  = prices_df.reindex(columns=TICKERS)
     returns_df = returns_df.reindex(columns=TICKERS)
     alpha_df   = alpha_df.reindex(columns=TICKERS)
+    gex_df     = gex_df.reindex(columns=TICKERS).fillna(0.0)
 
     logger.info(
         f"Loaded | prices:{len(prices_df)}d  returns:{len(returns_df)}d  "
-        f"regime:{len(regime_df)}d  alpha:{len(alpha_df)}d"
-    )
-    logger.info(
-        f"Ranges | prices:{prices_df.index.min().date()}→{prices_df.index.max().date()}  "
-        f"regime:{regime_df.index.min().date()}→{regime_df.index.max().date()}"
+        f"regime:{len(regime_df)}d  alpha:{len(alpha_df)}d  gex:{len(gex_df)}d"
     )
 
-    # Log alpha diagnostics
-    logger.info(
-        f"Alpha diagnostics: "
-        f"BIL={alpha_df['BIL'].mean():+.3f} "
-        f"SHV={alpha_df['SHV'].mean():+.3f} "
-        f"SPY={alpha_df['SPY'].mean():+.3f} "
-        f"QQQ={alpha_df['QQQ'].mean():+.3f}"
-    )
-    if alpha_df["BIL"].mean() > 0.10:
-        logger.warning(
-            "⚠️  BIL mean alpha > 0.10 — cash trap risk. "
-            "Verify low-vol signal excludes BIL/SHV. Re-run precompute if needed."
+    def _run(start: str, end: str, warmup: int) -> pd.DataFrame:
+        return StandaloneBacktester().run(
+            prices_df, returns_df, regime_df, alpha_df, gex_df,
+            start_date=start, end_date=end, warmup_days=warmup,
         )
 
-    has_soft = all(c in regime_df.columns for c in _SOFT_COLS)
-    has_urg  = "ltc_urgency" in regime_df.columns
-    logger.info(
-        f"{'✅' if has_soft else '⚠️ '} GMM posteriors: {'active' if has_soft else 'fallback 20%'} | "
-        f"{'✅' if has_urg else '⚠️ '} Vol urgency: {'active' if has_urg else 'z_mu proxy'}"
-    )
-    logger.info(f"  λ_turn = {_LAMBDA_TURN:.4f} (target: 12-18% daily turnover)")
-
-    ts = StandaloneBacktester().run(
-        prices_df, returns_df, regime_df, alpha_df,
-        start_date="2020-01-02", end_date="2024-12-31",
-        warmup_days=_WARMUP_DAYS,
-    )
+    ts = _run("2020-01-02", "2024-12-31", _WARMUP_DAYS)
     if ts.empty:
         logger.error("Tearsheet empty — check data alignment.")
         sys.exit(1)
@@ -808,8 +913,8 @@ def main() -> None:
     results: List[WFFold] = []
 
     for fid, (is_s, is_e, oos_s, oos_e) in enumerate(folds):
-        t_is = StandaloneBacktester().run(prices_df, returns_df, regime_df, alpha_df, is_s, is_e, warmup_days=_WF_WARMUP_DAYS)
-        t_oo = StandaloneBacktester().run(prices_df, returns_df, regime_df, alpha_df, oos_s, oos_e, warmup_days=_WF_WARMUP_DAYS)
+        t_is = _run(is_s,  is_e,  _WF_WARMUP_DAYS)
+        t_oo = _run(oos_s, oos_e, _WF_WARMUP_DAYS)
         if t_oo.empty or len(t_oo) < 5:
             continue
         r_oo  = t_oo["daily_return"].values

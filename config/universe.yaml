@@ -1,14 +1,14 @@
 # FORTRESS v5 - universe.yaml
 # Path: config/universe.yaml
 #
-# Defines the exact 25-asset investable universe.
-# The dimensionality of this file (25) dictates the output dimension 
+# Defines the expanded 100-asset investable universe.
+# The dimensionality of this file dictates the output dimension 
 # of the GAT alpha vector and the EDT action space.
 #
 # Liquidity Tiers (enforced by config/risk_limits.yaml):
 #   Tier 1: Max position 25% (Broad equity, mega-cap fixed income, primary safe havens)
-#   Tier 2: Max position 15% (Sector equity, emerging markets, standard commodities)
-#   Tier 3: Max position 5%  (Volatility proxies, highly constrained assets)
+#   Tier 2: Max position 15% (Sector equity, emerging markets, standard commodities, mega-cap singles)
+#   Tier 3: Max position 5%  (Volatility proxies, highly constrained assets, large-cap singles)
 
 # ── 1. ASSET UNIVERSE DEFINITION ─────────────────────────────────────
 assets:
@@ -16,7 +16,7 @@ assets:
   - {ticker: SPY,  name: 'S&P 500 ETF',          category: equity_broad, tier: 1, min_w: 0.0, max_w: 0.25}
   - {ticker: QQQ,  name: 'Nasdaq-100 ETF',       category: equity_broad, tier: 1, min_w: 0.0, max_w: 0.25}
   - {ticker: IWM,  name: 'Russell 2000 ETF',     category: equity_broad, tier: 1, min_w: 0.0, max_w: 0.25}
-  - {ticker: VTV,  name: 'Value ETF',            category: equity_broad, tier: 1, min_w: 0.0, max_w: 0.25}
+  - {ticker: COWZ, name: 'Cash Cow ETF',         category: equity_broad, tier: 1, min_w: 0.0, max_w: 0.25}
 
   # US Sector Equity (Tier 2)
   - {ticker: XLK,  name: 'Technology Sector',    category: equity_sector, tier: 2, min_w: 0.0, max_w: 0.15}
@@ -25,24 +25,22 @@ assets:
   - {ticker: XLP,  name: 'Consumer Staples',     category: equity_sector, tier: 2, min_w: 0.0, max_w: 0.15}
   - {ticker: XLI,  name: 'Industrial Sector',    category: equity_sector, tier: 2, min_w: 0.0, max_w: 0.15}
   - {ticker: XLE,  name: 'Energy Sector',        category: equity_sector, tier: 2, min_w: 0.0, max_w: 0.15}
-
-  # International Equity (Tiers 1 & 2)
-  - {ticker: EFA,  name: 'Developed Markets',    category: equity_intl,   tier: 1, min_w: 0.0, max_w: 0.25}
-  - {ticker: EEM,  name: 'Emerging Markets',     category: equity_intl,   tier: 2, min_w: 0.0, max_w: 0.15}
+  - {ticker: XLY,  name: 'Consumer Discretionary',category: equity_sector, tier: 2, min_w: 0.0, max_w: 0.15}
+  - {ticker: XLB,  name: 'Materials Sector',     category: equity_sector, tier: 2, min_w: 0.0, max_w: 0.15}
+  - {ticker: XLC,  name: 'Communication Sector', category: equity_sector, tier: 2, min_w: 0.0, max_w: 0.15}
+  - {ticker: XLU,  name: 'Utilities Sector',     category: equity_sector, tier: 2, min_w: 0.0, max_w: 0.15}
 
   # Fixed Income (Tiers 1 & 2)
   - {ticker: TLT,  name: '20+ Year Treasury',    category: fixed_income,  tier: 1, min_w: 0.0, max_w: 0.25}
-  - {ticker: IEF,  name: '7-10 Year Treasury',   category: fixed_income,  tier: 1, min_w: 0.0, max_w: 0.25}
-  - {ticker: SHY,  name: '1-3 Year Treasury',    category: fixed_income,  tier: 1, min_w: 0.0, max_w: 0.30}
   - {ticker: LQD,  name: 'Inv Grade Corporate',  category: fixed_income,  tier: 1, min_w: 0.0, max_w: 0.25}
   - {ticker: HYG,  name: 'High Yield Corporate', category: fixed_income,  tier: 2, min_w: 0.0, max_w: 0.15}
 
   # Commodities & Real Assets (Tiers 1 & 2)
   - {ticker: GLD,  name: 'Gold Trust',           category: commodity,     tier: 1, min_w: 0.0, max_w: 0.25}
   - {ticker: SLV,  name: 'Silver Trust',         category: commodity,     tier: 2, min_w: 0.0, max_w: 0.15}
+  - {ticker: GDX,  name: 'Gold Miners',          category: commodity,     tier: 2, min_w: 0.0, max_w: 0.15}
   - {ticker: USO,  name: 'US Oil Fund',          category: commodity,     tier: 2, min_w: 0.0, max_w: 0.15}
   - {ticker: PDBC, name: 'Broad Commodity',      category: commodity,     tier: 2, min_w: 0.0, max_w: 0.15}
-  - {ticker: VNQ,  name: 'Real Estate REIT',     category: real_assets,   tier: 2, min_w: 0.0, max_w: 0.15}
 
   # Volatility & Extreme Hedges (Tier 3 - Highly Constrained)
   - {ticker: VIXY, name: 'Short-Term VIX',       category: volatility,    tier: 3, min_w: 0.0, max_w: 0.05}
@@ -51,13 +49,89 @@ assets:
   - {ticker: SHV,  name: 'Short Treasury Bond',  category: fixed_income,  tier: 1, min_w: 0.0, max_w: 0.50}
   - {ticker: BIL,  name: '1-3 Month T-Bill',     category: fixed_income,  tier: 1, min_w: 0.0, max_w: 0.50}
 
+  # ── MEGA-CAP EQUITY ENGINE (TIER 2 - CROSS-SECTIONAL VARIANCE) ──
+  - {ticker: AAPL,  category: equity_single, tier: 2, min_w: 0.0, max_w: 0.10}
+  - {ticker: MSFT,  category: equity_single, tier: 2, min_w: 0.0, max_w: 0.10}
+  - {ticker: GOOGL, category: equity_single, tier: 2, min_w: 0.0, max_w: 0.10}
+  - {ticker: AMZN,  category: equity_single, tier: 2, min_w: 0.0, max_w: 0.10}
+  - {ticker: NVDA,  category: equity_single, tier: 2, min_w: 0.0, max_w: 0.10}
+  - {ticker: META,  category: equity_single, tier: 2, min_w: 0.0, max_w: 0.10}
+  - {ticker: TSLA,  category: equity_single, tier: 2, min_w: 0.0, max_w: 0.10}
+  - {ticker: BRK.B, category: equity_single, tier: 2, min_w: 0.0, max_w: 0.10}
+  - {ticker: UNH,   category: equity_single, tier: 2, min_w: 0.0, max_w: 0.10}
+  - {ticker: JPM,   category: equity_single, tier: 2, min_w: 0.0, max_w: 0.10}
+  - {ticker: V,     category: equity_single, tier: 2, min_w: 0.0, max_w: 0.10}
+  - {ticker: PG,    category: equity_single, tier: 2, min_w: 0.0, max_w: 0.10}
+  - {ticker: MA,    category: equity_single, tier: 2, min_w: 0.0, max_w: 0.10}
+  - {ticker: HD,    category: equity_single, tier: 2, min_w: 0.0, max_w: 0.10}
+  - {ticker: CVX,   category: equity_single, tier: 2, min_w: 0.0, max_w: 0.10}
+  - {ticker: JNJ,   category: equity_single, tier: 2, min_w: 0.0, max_w: 0.10}
+  - {ticker: ABBV,  category: equity_single, tier: 2, min_w: 0.0, max_w: 0.10}
+  - {ticker: PEP,   category: equity_single, tier: 2, min_w: 0.0, max_w: 0.10}
+  - {ticker: COST,  category: equity_single, tier: 2, min_w: 0.0, max_w: 0.10}
+  - {ticker: MRK,   category: equity_single, tier: 2, min_w: 0.0, max_w: 0.10}
+  
+  # ── LARGE-CAP EQUITY ENGINE (TIER 3) ──
+  - {ticker: KO,    category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: AVGO,  category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: WMT,   category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: MCD,   category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: TMO,   category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: CRM,   category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: BAC,   category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: PFE,   category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: CSCO,  category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: LIN,   category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: ACN,   category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: ABT,   category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: ORCL,  category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: AMD,   category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: DIS,   category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: WFC,   category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: TXN,   category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: PM,    category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: COP,   category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: NEE,   category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: INTC,  category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: VZ,    category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: HON,   category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: CVS,   category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: QCOM,  category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: UNP,   category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: BA,    category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: IBM,   category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: LOW,   category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: SPGI,  category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: GS,    category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: CAT,   category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: ELV,   category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: BLK,   category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: MDT,   category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: SYK,   category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: INTU,  category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: AXP,   category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: AMGN,  category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: ISRG,  category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: NOW,   category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: T,     category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: GE,    category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: BKNG,  category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: PLD,   category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: ADI,   category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: MDLZ,  category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: CB,    category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: GILD,  category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: DE,    category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: CI,    category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: BMY,   category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: MMC,   category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: TJX,   category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+  - {ticker: SYY,   category: equity_single, tier: 3, min_w: 0.0, max_w: 0.05}
+
 # ── 2. SYSTEM REFERENCES ─────────────────────────────────────────────
 
-# The benchmark against which beta, relative performance, and alpha are measured
 benchmark: SPY
 
-# Assets the Deep Hedging network and FPGA circuit breaker will default to
-# when `fpga_intraday_loss_halt_pct` or `max_drawdown_halt_pct` are breached.
 safe_havens: 
   - SHV
   - BIL

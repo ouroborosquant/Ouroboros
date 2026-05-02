@@ -2,18 +2,18 @@
 FORTRESS v5 - signals/options_flow.py  [v4 — DEALER GAMMA & DARK POOL REWRITE]
 
 SYSTEM OVERRIDE:
-Since you do not have a paid API (Databento/Polygon) to fetch raw option chains, 
-the CBOE CDN block has paralyzed your alpha. A VIX proxy is mathematical noise.
+Since the paid API (Databento/Polygon) to fetch raw option chains is unavailable, 
+the CBOE CDN block has paralyzed alpha generation. A VIX proxy is mathematical noise.
 
 SOLUTION: SQUEEZEMETRICS DIX/GEX
 We are bypassing CBOE entirely. This module now asynchronously fetches the SqueezeMetrics 
-DIX.csv daily feed (which is free and publicly hosted). This provides:
+DIX.csv daily feed (free, publicly hosted). This provides:
 1. GEX (Gamma Exposure): The aggregate dealer option positioning. 
    Negative GEX = dealer short gamma = volatility expansion/crashes.
 2. DIX (Dark Index): The percentage of dark pool volume that is market-maker buying.
    High DIX = institutions quietly accumulating = bullish.
 
-This is true, orthogonal institutional flow. It directly resolves your alpha vacuum. 
+This is true, orthogonal institutional flow. It directly resolves the alpha vacuum. 
 The public API of the module remains untouched; `precompute_alpha_signals.py` will 
 execute this without knowing the underlying engine was swapped.
 """
@@ -44,10 +44,19 @@ except ImportError:
 
 logger = logging.getLogger("Ouroboros.OptionsFlow")
 
+# Ensure the universe matches the expanded 100-asset list defined in config/universe.yaml
 _UNIVERSE: List[str] = [
     "SPY", "QQQ", "IWM", "TLT", "HYG", "LQD", "GLD", "SLV",
     "GDX", "XLE", "XLF", "XLK", "XLV", "XLU", "XLI", "XLP",
     "XLY", "XLB", "XLC", "VIXY", "BIL", "SHV", "USO", "PDBC", "COWZ",
+    "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "BRK.B", "UNH", "JPM",
+    "V", "PG", "MA", "HD", "CVX", "JNJ", "ABBV", "PEP", "COST", "MRK",
+    "KO", "AVGO", "WMT", "MCD", "TMO", "CRM", "BAC", "PFE", "CSCO", "LIN",
+    "ACN", "ABT", "ORCL", "AMD", "DIS", "WFC", "TXN", "PM", "COP", "NEE",
+    "INTC", "VZ", "HON", "CVS", "QCOM", "UNP", "BA", "IBM", "LOW", "SPGI",
+    "GS", "CAT", "ELV", "BLK", "MDT", "SYK", "INTU", "AXP", "AMGN", "ISRG",
+    "NOW", "T", "GE", "BKNG", "PLD", "ADI", "MDLZ", "CB", "GILD", "DE",
+    "CI", "BMY", "MMC", "TJX", "SYY"
 ]
 
 _EQUITY_ETFS:    frozenset[str] = frozenset({
@@ -195,10 +204,10 @@ class InstitutionalDealerGammaEngine:
             return result
 
         for ticker in _UNIVERSE:
-            if ticker in _EQUITY_ETFS:
+            if ticker in _EQUITY_ETFS or ticker not in _BOND_ETFS and ticker not in _COMMODITY_ETFS:
+                # Apply scalar directly to broad equity, sectors, and the single names
                 result[ticker] = scalar
             elif ticker in _BOND_ETFS:
-                # Flight to safety delta
                 result[ticker] = -scalar * 0.5
         return result
 
@@ -221,28 +230,18 @@ class InstitutionalDealerGammaEngine:
         dix = self._dix.reindex(dates).ffill().fillna(self._dix.median())
         gex = self._gex.reindex(dates).ffill().fillna(self._gex.median())
 
-        # Z-score DIX (Mean-reverting oscillator of dark pool buying)
         dix_ewm = dix.ewm(halflife=_ZSCORE_HL, min_periods=21)
         dix_z   = (dix - dix_ewm.mean()) / dix_ewm.std().clip(lower=1e-4)
 
-        # Z-score GEX (Identify gamma traps and gamma squeezes)
         gex_ewm = gex.ewm(halflife=_ZSCORE_HL, min_periods=21)
         gex_z   = (gex - gex_ewm.mean()) / gex_ewm.std().clip(lower=1e-4)
 
-        # Signal Synthesis:
-        # If DIX is high (institutions buying) AND GEX is high (dealers supporting), highly bullish.
-        # If GEX drops negative, dealer hedging amplifies sell-offs, highly bearish.
         combined = 0.6 * dix_z + 0.4 * gex_z
         
-        # Bounded activation function
         signal = np.tanh(combined * 0.6)
         return signal
 
     def _compute_vix_vvix_proxy(self, dates: pd.DatetimeIndex) -> pd.Series:
-        """
-        VIX/VVIX momentum proxy — v2 sign fix (fear-following).
-        NEGATIVE when VIX elevated.
-        """
         if self._vix is None:
             return pd.Series(0.0, index=dates)
 
@@ -263,7 +262,6 @@ class InstitutionalDealerGammaEngine:
     def get_signal_summary(self) -> dict:
         return {
             "data_mode":      self._data_mode,
-            # Preserving the exact key 'has_cboe' so precompute_alpha_signals.py does not KeyError
             "has_cboe":       self._data_mode == "squeezemetrics", 
             "has_equity_pc":  self._data_mode == "squeezemetrics",
         }
@@ -342,7 +340,6 @@ class OptionsFlowSignalEngine:
     """Combined engine — public API for precompute_alpha_signals.py."""
 
     def __init__(self) -> None:
-        # Instantiating the new Dealer Gamma Engine while retaining the original variable name
         self._pc_engine   = InstitutionalDealerGammaEngine()
         self._flow_engine = ETFCreationFlowEngine()
 
@@ -411,7 +408,6 @@ async def _test() -> None:
         "  PYTHONPATH=. python scripts/validate_signal_ic.py "
         "--signal-file research/outputs/cache/options_flow_etf.parquet"
     )
-
 
 if __name__ == "__main__":
     asyncio.run(_test())

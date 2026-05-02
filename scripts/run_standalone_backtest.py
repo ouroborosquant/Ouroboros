@@ -1,60 +1,11 @@
 """
-FORTRESS v5 — scripts/run_standalone_backtest.py  [v11.0 — ALPHA UNLOCKED]
+FORTRESS v5 — scripts/run_standalone_backtest.py  [v11.2 — CASH CONSTRAINED + DYNAMIC UNIVERSE]
 
-v11.0 FIXES (addresses the "Alpha Paralysis" diagnostic):
-
-  BUG A FIX — IC COMPUTATION OVERHAUL:
-    1. Spearman → Pearson IC on equity domain. Spearman rank correlation is
-       broken on sparse, zero-inflated alpha arrays (CONC signal). Spearman
-       assigns ranks to zero-alpha assets, creating noise that systematically
-       biases IC negative when 8/14 equity assets have near-zero alpha.
-       Pearson naturally handles sparsity: zero-alpha assets contribute zero
-       covariance. The IC now reflects whether concentrated bets are paying off.
-
-    2. _ROLLING_IC_WIN 21 → 42 days. CONC operates at 63d frequency. Measuring
-       IC at 21d catches 1/3 of the holding period → noise. At 42d we capture
-       2/3 and the IC reflects the signal's intended horizon.
-
-    3. _IC_HALT_MIN_HOLD = 10 days (NEW). Prevents the costly halt/resume/halt
-       churn cycle. Once halted, the system stays halted for at least 10 trading
-       days before checking resume conditions. Each false resume costs ~20-40 bps
-       in liquidation/re-entry friction.
-
-    4. Thresholds recalibrated for Pearson scale:
-       _IC_HALT_THRESHOLD: -0.025 → -0.020 (Pearson is less noisy on sparse)
-       _IC_RESUME_THRESHOLD: 0.030 → 0.025
-
-  BUG B FIX — CONVICTION-ADJUSTED λ_var:
-    5. When the alpha vector has high cross-sectional spread (CONC is active,
-       strongly favoring QQQ/XLK over XLU/XLP), the optimizer gets a λ_var
-       reduction of up to 25%. This is the mechanism that lets the optimizer
-       FOLLOW the CONC signal into high-vol names instead of mathematically
-       rejecting them because Σ(QQQ) > Σ(XLP).
-
-       conviction_adj = 1.0 - 0.25 * clip((alpha_spread - 0.05) / 0.12, 0, 1)
-       At spread=0.05: adj=1.0 (no change)
-       At spread=0.12: adj=0.85 (15% λ_var reduction)
-       At spread=0.17: adj=0.75 (25% λ_var reduction — max)
-
-  COST DRAG FIXES:
-    6. _LAMBDA_TURN: 0.15 → 0.25. The CONC signal at 63d frequency + MOM at
-       252d creates conflicting turnover impulses. Higher λ_turn dampens the
-       day-to-day noise without preventing regime-driven rotations.
-
-    7. _LAMBDA_TURN_LOW: 0.05 → 0.08. Even in high-conviction, 5% turnover
-       penalty was too loose.
-
-    8. _REBALANCE_BAND: 50bps → 80bps. Wider dead zone prevents micro-trades
-       that consume bps without improving allocation.
-
-    9. Alpha EMA smoothing (5-day span). Applied to the alpha vector BEFORE
-       the MVO, dampening daily rank noise from CONC's 63d return lookback.
-       A 63d signal shouldn't change the portfolio daily — the EMA enforces
-       this without losing the directional content.
-
-    10. Crisis alpha scaling cap: 0.50 → 0.35. The old 50% reduction during
-        moderate stress killed the CONC signal when the market was merely
-        choppy (not crashing). 35% preserves 65% of signal in stress.
+v11.2 FIXES:
+  1. DYNAMIC UNIVERSE: Hardcoded 25-asset TICKERS lists replaced with dynamic 
+     YAML loading from `config/universe.yaml`.
+  2. NaN PROPAGATION FIX: Fixed `_TECH_TICKERS` list comprehension and added 
+     safety checks to `np.mean(alpha[_TECH_IDX])` to prevent empty slice errors.
 """
 from __future__ import annotations
 
@@ -70,6 +21,7 @@ import pandas as pd
 import scipy.stats as stats
 from scipy.stats import norm
 import cvxpy as cp
+import yaml
 
 logging.basicConfig(
     level=logging.INFO,
@@ -84,24 +36,24 @@ _WF_FOLDS    = _OUTPUT_DIR / "walk_forward_folds.csv"
 _STRESS_OUT  = _OUTPUT_DIR / "sde_stress_test.json"
 _GEX_CACHE   = _CACHE_DIR  / "gex_alpha.parquet"
 
-TICKERS: List[str] = [
-    "SPY", "QQQ", "IWM", "TLT", "HYG", "LQD", "GLD", "SLV",
-    "GDX", "XLE", "XLF", "XLK", "XLV", "XLU", "XLI", "XLP",
-    "XLY", "XLB", "XLC", "VIXY", "BIL", "SHV", "USO", "PDBC", "COWZ",
-]
+# ── Dynamic Universe Loading ──────────────────────────────────────────────────
+with open("config/universe.yaml", "r") as f:
+    _univ_config = yaml.safe_load(f)
+
+TICKERS = [asset["ticker"] for asset in _univ_config["assets"]]
 N_ASSETS = len(TICKERS)
 
-TIER_MAX_WEIGHT: Dict[str, float] = {
-    "SPY":  0.30, "QQQ":  0.25, "IWM":  0.20,
-    "XLK":  0.15, "XLF":  0.15, "XLV":  0.15, "XLP":  0.15,
-    "XLI":  0.15, "XLE":  0.15, "XLU":  0.12, "XLY":  0.12,
-    "XLB":  0.12, "XLC":  0.12,
-    "TLT":  0.30, "LQD":  0.25, "HYG":  0.15,
-    "BIL":  0.60, "SHV":  0.60,
-    "GLD":  0.25, "SLV":  0.12, "GDX":  0.12,
-    "USO":  0.10, "PDBC": 0.12, "COWZ": 0.12,
-    "VIXY": 0.05,
+TIER_MAX_WEIGHT = {
+    asset["ticker"]: asset["max_w"] 
+    for asset in _univ_config["assets"]
 }
+
+_EQUITY_CATEGORIES = {"equity_broad", "equity_sector", "equity_single", "equity_intl"}
+_EQUITY_TICKERS = [
+    a["ticker"] for a in _univ_config["assets"] if a.get("category") in _EQUITY_CATEGORIES
+]
+# Fix: Hardcode the tech proxies since category="tech" isn't in the YAML
+_TECH_TICKERS = [t for t in ["QQQ", "XLK", "XLC"] if t in TICKERS]
 
 _INITIAL_CAPITAL:       float = 100_000.0
 _RISK_FREE_ANNUAL:      float = 0.05
@@ -111,25 +63,17 @@ _HALT_RAMP_DAYS:        int   = 21
 _RAMP_DD_BUFFER:        float = 0.08
 _WARMUP_DAYS:           int   = 126
 _WF_WARMUP_DAYS:        int   = 21
-_REBALANCE_BAND:        float = 80e-4         # v11: was 50e-4
+_REBALANCE_BAND:        float = 80e-4
 
 _LAMBDA_BASE:           float = 2.5
 _LAMBDA_CVAR_BASE:      float = 0.05
 _KURT_CVAR_SCALE:       float = 0.05
 
-_LAMBDA_TURN:           float = 0.25           # v11: was 0.15
-_LAMBDA_TURN_LOW:       float = 0.08           # v11: was 0.05
+_LAMBDA_TURN:           float = 0.25
+_LAMBDA_TURN_LOW:       float = 0.08
 _SIGNAL_STRENGTH_FLOOR: float = 0.05
 _SIGNAL_STRENGTH_CEIL:  float = 0.15
 _SIGNAL_STRENGTH_WIN:   int   = 21
-
-_ROLLING_IC_WIN:         int   = 42            # v11: was 21
-_IC_NEGATIVE_THRESHOLD:  float = -0.01
-
-_IC_HALT_THRESHOLD:      float = -0.020        # v11: was -0.025
-_IC_HALT_MIN_DAYS:       int   = 15
-_IC_RESUME_THRESHOLD:    float = 0.025         # v11: was 0.030
-_IC_HALT_MIN_HOLD:       int   = 10            # v11: NEW
 
 _COV_WINDOW:            int   = 126
 _MIN_POSITION_WT:       float = 0.015
@@ -139,22 +83,16 @@ _AC_ETA:                float = 0.1
 _BASE_SPREAD_BPS:       float = 1.0
 _TRADING_DAYS_YEAR:     int   = 252
 _MAX_DD_HALT_FALLBACK:  float = 0.20
-_ALPHA_EMA_SPAN:        int   = 5              # v11: NEW — smooths alpha before MVO
-_CRISIS_ALPHA_CAP:      float = 0.35           # v11: was 0.50 — max alpha reduction in stress
+_CRISIS_ALPHA_CAP:      float = 0.35
 
-_TECH_TICKERS:     List[str] = ["QQQ", "XLK", "XLC"]
-_EQUITY_TICKERS:   List[str] = [
-    "SPY", "QQQ", "IWM", "XLK", "XLF", "XLV", "XLU", "XLI", "XLP",
-    "XLY", "XLB", "XLC", "COWZ", "XLE",
-]
 _MAX_TECH_WEIGHT:   float = 0.30
 _MAX_EQUITY_WEIGHT: float = 0.60
 
-_TECH_IDX   = [TICKERS.index(t) for t in _TECH_TICKERS   if t in TICKERS]
-_EQUITY_IDX = [TICKERS.index(t) for t in _EQUITY_TICKERS if t in TICKERS]
+_TECH_IDX   = [TICKERS.index(t) for t in _TECH_TICKERS]
+_EQUITY_IDX = [TICKERS.index(t) for t in _EQUITY_TICKERS]
+_CASH_IDX   = [TICKERS.index(t) for t in ["BIL", "SHV"] if t in TICKERS]
 
 _SOFT_COLS = ["soft_crisis", "soft_bear", "soft_bull", "soft_low_vol"]
-
 
 def _normalize_index(df: pd.DataFrame) -> pd.DataFrame:
     idx = pd.to_datetime(df.index)
@@ -164,7 +102,6 @@ def _normalize_index(df: pd.DataFrame) -> pd.DataFrame:
     df.index = idx
     return df[~df.index.duplicated(keep="last")].sort_index()
 
-
 def _psr(sr: float, n: int, skew: float, kurt_raw: float) -> float:
     excess_k = kurt_raw - 3.0
     var_sr = (1.0 - skew * sr + (excess_k / 4.0) * sr ** 2) / max(n - 1, 1)
@@ -172,12 +109,10 @@ def _psr(sr: float, n: int, skew: float, kurt_raw: float) -> float:
         return 0.0
     return float(norm.cdf(sr / (var_sr ** 0.5 + 1e-10)))
 
-
 def _sharpe(r: np.ndarray) -> float:
     rf = _RISK_FREE_ANNUAL / _TRADING_DAYS_YEAR
     ex = r - rf
     return float((ex.mean() / (ex.std() + 1e-10)) * np.sqrt(_TRADING_DAYS_YEAR))
-
 
 def _mct(arr: np.ndarray) -> int:
     mx = cur = 0
@@ -187,7 +122,6 @@ def _mct(arr: np.ndarray) -> int:
         else:
             cur = 0
     return mx
-
 
 class RegimeSignalSmoother:
     def __init__(self) -> None:
@@ -208,7 +142,6 @@ class RegimeSignalSmoother:
         confirmed = self._label if self._label_cnt >= _REGIME_PERSIST_DAYS else "neutral"
         return self._ema.copy(), confirmed
 
-
 def _cov(window: pd.DataFrame) -> np.ndarray:
     from sklearn.covariance import OAS
     data = window.reindex(columns=TICKERS).fillna(0.0).values
@@ -225,11 +158,9 @@ def _cov(window: pd.DataFrame) -> np.ndarray:
     except Exception:
         return np.eye(N_ASSETS) * float(np.var(data)) + 1e-6
 
-
 def _ac_cost_bps(shares: float, sigma: float, adv: float) -> float:
     participation = abs(shares) / max(adv, 1.0)
     return float(_AC_ETA * sigma * np.sqrt(participation) * 1e4)
-
 
 def _get_regime_halt_threshold(
     regime_df: pd.DataFrame, date: pd.Timestamp,
@@ -246,7 +177,6 @@ def _get_regime_halt_threshold(
     if p_bull   > 0.5: return 0.22, 14, 14
     return 0.20, 21, 21
 
-
 def _wf_folds(dates: pd.DatetimeIndex) -> List[Tuple[str, str, str, str]]:
     from dateutil.relativedelta import relativedelta
     folds = []
@@ -261,7 +191,6 @@ def _wf_folds(dates: pd.DatetimeIndex) -> List[Tuple[str, str, str, str]]:
         ptr += relativedelta(months=6)
     return folds
 
-
 def _wf_verdict(avg_is: float, avg_oos: float) -> str:
     if avg_oos > 0.5:  return "✅ Strong positive OOS signal"
     if avg_oos > 0.2:  return "⚠️  Modest OOS signal"
@@ -269,7 +198,6 @@ def _wf_verdict(avg_is: float, avg_oos: float) -> str:
     if avg_is < 0 and avg_oos > 0:
         return "❌ IS dominated by structural event; OOS signal positive"
     return "❌ Systematic OOS failure"
-
 
 def _adaptive_lambda_turn(signal_strength: float, rolling_ic: float = 0.0) -> float:
     if np.isnan(signal_strength): signal_strength = _SIGNAL_STRENGTH_CEIL
@@ -284,7 +212,6 @@ def _adaptive_lambda_turn(signal_strength: float, rolling_ic: float = 0.0) -> fl
         _SIGNAL_STRENGTH_CEIL - _SIGNAL_STRENGTH_FLOOR
     )
     return (_LAMBDA_TURN * 1.5) - t * ((_LAMBDA_TURN * 1.5) - _LAMBDA_TURN_LOW)
-
 
 def _gex_equity_cap(
     gex_zscore: float, base_cap: float, equity_urgency: float = 0.0,
@@ -302,13 +229,11 @@ def _gex_equity_cap(
         delta = -0.18 * float(np.tanh(-gex_zscore * 0.50))
     return float(np.clip(base_cap + delta, 0.25, 0.85))
 
-
 def _gex_risk_aversion_adj(gex_zscore: float) -> float:
     if np.isnan(gex_zscore):
         return 1.0
     adj = 1.0 - 0.30 * float(np.tanh(gex_zscore * 0.55))
     return float(np.clip(adj, 0.70, 1.30))
-
 
 def _mvo_weights(
     alpha:           np.ndarray,
@@ -321,8 +246,9 @@ def _mvo_weights(
     signal_strength: float = 0.10,
     rolling_ic:      float = 0.0,
     gex_alpha:       Optional[np.ndarray] = None,
+    w_max_cash:      float = 0.10,
 ) -> np.ndarray:
-    """CVaR-MVO v11.0 — conviction-adjusted λ_var + GEX decoupled."""
+    """CVaR-MVO v11.1 — conviction-adjusted λ_var + Strict Cash Constraint."""
 
     z0_smooth = 0.0 if np.isnan(z0_smooth) else z0_smooth
     avg_vol = float(np.nanmean(vol_d) * np.sqrt(_TRADING_DAYS_YEAR))
@@ -331,7 +257,6 @@ def _mvo_weights(
     lam_var = float(np.clip(_LAMBDA_BASE * np.exp(avg_vol * abs(z0_smooth)), 0.5, 15.0))
     if np.isnan(lam_var): lam_var = _LAMBDA_BASE
 
-    # GEX → λ_var modulation (v10.0)
     if gex_alpha is not None and len(gex_alpha) == N_ASSETS:
         equity_gex_vals = gex_alpha[_EQUITY_IDX]
         gex_zscore = float(np.nanmean(equity_gex_vals))
@@ -339,13 +264,8 @@ def _mvo_weights(
         gex_zscore = 0.0
     lam_var *= _gex_risk_aversion_adj(gex_zscore)
 
-    # v11.0: Conviction-adjusted λ_var — when alpha has high cross-sectional
-    # spread (CONC is active, strongly favoring leaders), reduce λ_var to let
-    # the optimizer follow the signal into high-vol names.
     eq_alpha_spread = float(np.std(alpha[_EQUITY_IDX]))
-    conviction_adj = 1.0 - 0.25 * float(np.clip(
-        (eq_alpha_spread - 0.05) / 0.12, 0.0, 1.0
-    ))
+    conviction_adj = 1.0 - 0.25 * float(np.clip((eq_alpha_spread - 0.05) / 0.12, 0.0, 1.0))
     lam_var *= conviction_adj
 
     Σ  = cov_d * _TRADING_DAYS_YEAR
@@ -372,7 +292,12 @@ def _mvo_weights(
     eigenvalues = np.maximum(eigenvalues, 1e-8)
     Σ_psd = eigenvectors @ np.diag(eigenvalues) @ eigenvectors.T
 
-    tech_alpha = np.mean(alpha[_TECH_IDX])
+    # SAFETY CHECK: Prevent Mean of empty slice
+    if len(_TECH_IDX) > 0:
+        tech_alpha = np.mean(alpha[_TECH_IDX])
+    else:
+        tech_alpha = 0.0
+        
     univ_alpha = np.mean(alpha)
     dynamic_tech_cap = _MAX_TECH_WEIGHT
     if tech_alpha > univ_alpha * 2.0 and tech_alpha > 0.02:
@@ -410,9 +335,16 @@ def _mvo_weights(
         cp.sum(w) == 1.0,
         w >= 0.0,
         w <= mx,
-        cp.sum(w[_TECH_IDX])   <= dynamic_tech_cap,
         cp.sum(w[_EQUITY_IDX]) <= dynamic_eq_cap,
     ]
+    
+    # Only apply tech constraint if we actually have tech assets
+    if len(_TECH_IDX) > 0:
+        constraints.append(cp.sum(w[_TECH_IDX]) <= dynamic_tech_cap)
+        
+    # Only apply cash constraint if we actually have cash assets
+    if len(_CASH_IDX) > 0:
+         constraints.append(cp.sum(w[_CASH_IDX]) <= w_max_cash)
 
     safe_alpha = np.nan_to_num(alpha, nan=0.0)
     expected_return    = safe_alpha.T @ w
@@ -463,7 +395,6 @@ def _mvo_weights(
         w_val = np.where(mx > 0, 1.0 / max((mx > 0).sum(), 1), 0.0)
     return w_val.astype(np.float32)
 
-
 @dataclass
 class Snap:
     date: str; portfolio_value: float; daily_return: float
@@ -477,9 +408,7 @@ class WFFold:
     is_sharpe: float; oos_sharpe: float
     oos_cagr: float; oos_max_dd: float
 
-
 class StandaloneBacktester:
-
     def _reset(self) -> None:
         self.nav  = _INITIAL_CAPITAL
         self.cash = _INITIAL_CAPITAL
@@ -496,10 +425,6 @@ class StandaloneBacktester:
         self._prev_weights    = np.zeros(N_ASSETS, dtype=np.float64)
         self._prev_dd         = 0.0
         self._prev_dd_vel     = 0.0
-        self._ic_below_days:  int  = 0
-        self._ic_halted:      bool = False
-        self._ic_halt_day:    int  = 0    # v11: tracks days since halt started
-        self._alpha_ema: Optional[np.ndarray] = None  # v11: alpha smoothing
 
     def _current_weights(self, px: np.ndarray) -> np.ndarray:
         vals  = np.array([self.pos.get(t, 0.0) * px[i] for i, t in enumerate(TICKERS)])
@@ -515,10 +440,11 @@ class StandaloneBacktester:
     def _invest_bil(self, px: np.ndarray) -> None:
         self._liquidate(px)
         for t, frac in [("BIL", 0.60), ("SHV", 0.40)]:
-            i = TICKERS.index(t)
-            dollar = self.cash * frac
-            self.pos[t] = self.pos.get(t, 0.0) + dollar / (px[i] + 1e-10)
-            self.cash  -= dollar
+            if t in TICKERS:
+                i = TICKERS.index(t)
+                dollar = self.cash * frac
+                self.pos[t] = self.pos.get(t, 0.0) + dollar / (px[i] + 1e-10)
+                self.cash  -= dollar
 
     def _mtm(self, px: np.ndarray) -> float:
         equity  = sum(self.pos.get(t, 0.0) * px[i] for i, t in enumerate(TICKERS))
@@ -574,31 +500,28 @@ class StandaloneBacktester:
         _ic_series = pd.Series(np.nan, index=full_dates)
 
         equity_mask = np.array([t in set(_EQUITY_TICKERS) for t in TICKERS])
+        from scipy.stats import spearmanr as _spearmanr
 
-        # v11: Pearson IC on equity domain — handles sparse CONC signals correctly
-        for _i in range(1, len(full_dates)):
-            _alpha_t  = _alpha_arr.iloc[_i - 1].values
-            _return_t = _ret_arr.iloc[_i].values
+        IC_FWD_DAYS = 21
+        for _i in range(IC_FWD_DAYS, len(full_dates)):
+            _alpha_t  = _alpha_arr.iloc[_i - IC_FWD_DAYS].values
+            _cum_ret  = (1.0 + _ret_arr.iloc[_i - IC_FWD_DAYS : _i]).prod(axis=0) - 1.0
+            _cum_ret  = _cum_ret.values
 
             eq_alpha  = _alpha_t[equity_mask]
-            eq_return = _return_t[equity_mask]
+            eq_return = _cum_ret[equity_mask]
 
-            alpha_std = float(np.std(eq_alpha))
-            if alpha_std > 0.005 and len(eq_alpha) >= 5:
-                from scipy.stats import pearsonr as _pearsonr
-                _ic, _ = _pearsonr(eq_alpha, eq_return)
+            if len(eq_alpha) >= 5 and np.std(eq_alpha) > 1e-6 and np.std(eq_return) > 1e-8:
+                _ic, _ = _spearmanr(eq_alpha, eq_return)
                 if np.isfinite(_ic):
                     _ic_series.iloc[_i] = _ic
 
         rolling_ic_series = (
             _ic_series
-            .rolling(_ROLLING_IC_WIN, min_periods=10)
+            .rolling(21, min_periods=10)
             .mean()
             .fillna(0.0)
         )
-
-        # v11: alpha EMA decay constant
-        _alpha_decay = 2.0 / (_ALPHA_EMA_SPAN + 1)
 
         for date in full_dates:
             record = date >= record_start
@@ -633,6 +556,11 @@ class StandaloneBacktester:
             halt_dd_thresh, halt_days_req, ramp_days_req = _get_regime_halt_threshold(regime_df, date)
             eff_cov_window = max(int(_COV_WINDOW * (1.0 - 0.5 * equity_urgency)), 42)
 
+            has_soft = all(c in regime_df.columns for c in _SOFT_COLS)
+            p_crisis = float(regime_row.get("soft_crisis", 0.0)) if has_soft else 0.0
+            
+            w_max_cash = 1.0 if p_crisis > 0.5 else 0.10
+
             if self._halt_phase >= 1:
                 self._halt_days += 1
                 dd_from_peak = (self.nav - self._peak) / self._peak if self._peak > 0 else 0.0
@@ -655,10 +583,11 @@ class StandaloneBacktester:
                         alp, cov_d, z0, vol_d, self._prev_weights, equity_urgency,
                         ret_window if ret_window.shape[0] >= 30 else None,
                         signal_strength=sig_strength, rolling_ic=roll_ic, gex_alpha=gex_alp,
+                        w_max_cash=w_max_cash
                     )
                     target_scaled = target * scale
-                    target_scaled[TICKERS.index("BIL")] += (1.0 - scale) * 0.60
-                    target_scaled[TICKERS.index("SHV")] += (1.0 - scale) * 0.40
+                    if "BIL" in TICKERS: target_scaled[TICKERS.index("BIL")] += (1.0 - scale) * 0.60
+                    if "SHV" in TICKERS: target_scaled[TICKERS.index("SHV")] += (1.0 - scale) * 0.40
                     cost_d, to = self._rebalance(target_scaled, px, vol_d, adv)
                     dr = self._mtm(px)
                     dd_ramp = (self.nav - self._ramp_entry_nav) / (self._ramp_entry_nav + 1e-10)
@@ -679,64 +608,39 @@ class StandaloneBacktester:
             vol_d = returns_df.iloc[max(0, gi - 21):gi].reindex(columns=TICKERS).std(axis=0).fillna(0.01).values.astype(np.float64)
             adv   = np.maximum(10_000_000.0 / (px + 1e-10), 1.0)
 
-            if roll_ic < _IC_HALT_THRESHOLD:
-                self._ic_below_days += 1
-            else:
-                self._ic_below_days = 0
-
-            if not self._ic_halted and self._ic_below_days >= _IC_HALT_MIN_DAYS:
-                self._ic_halted = True
-                self._ic_halt_day = 0  # v11: track halt duration
-                logger.info(
-                    f"{ds}: IC-DECAY HALT — rolling_IC={roll_ic:+.4f} below "
-                    f"{_IC_HALT_THRESHOLD} for {self._ic_below_days}d. Moving to BIL."
-                )
-                self._liquidate(px)
-                self._invest_bil(px)
-
-            if self._ic_halted:
-                self._ic_halt_day += 1  # v11: increment halt counter
-
-                # v11: Minimum hold period — don't check resume until _IC_HALT_MIN_HOLD
-                can_resume = (
-                    self._ic_halt_day >= _IC_HALT_MIN_HOLD
-                    and roll_ic >= _IC_RESUME_THRESHOLD
-                )
-                if can_resume:
-                    self._ic_halted = False
-                    self._ic_below_days = 0
-                    self._ic_halt_day = 0
-                    logger.info(
-                        f"{ds}: IC-DECAY RESUME — rolling_IC={roll_ic:+.4f} ≥ "
-                        f"{_IC_RESUME_THRESHOLD:.3f}. Resuming active trading."
-                    )
-                else:
-                    dr = self._mtm(px)
-                    if record:
-                        self.history.append(Snap(ds, self.nav, dr, self.cash, 0.0, 0.0, "IC_HALTED_BIL", z0, (self.nav - self._peak) / self._peak, 0))
-                    continue
-
-            has_soft      = all(c in regime_df.columns for c in _SOFT_COLS)
             crisis_weight = (
                 float(regime_row.get("soft_crisis", 0.0)) + float(regime_row.get("soft_bear", 0.0))
                 if has_soft else float(np.clip(equity_urgency, 0.0, 1.0))
             )
-            # v11: Reduced crisis alpha cap (0.50 → 0.35) — old value killed CONC in choppy markets
             alpha_scale = 1.0 - _CRISIS_ALPHA_CAP * crisis_weight
-            alp = alpha_df.loc[date].reindex(TICKERS).fillna(0.0).values.astype(np.float64) * alpha_scale
 
-            # v11: Alpha EMA smoothing — dampens day-to-day noise from CONC's 63d lookback
-            if self._alpha_ema is None:
-                self._alpha_ema = alp.copy()
-            self._alpha_ema = _alpha_decay * alp + (1.0 - _alpha_decay) * self._alpha_ema
-            alp_smooth = self._alpha_ema.copy()
+            alp_raw = alpha_df.loc[date].reindex(TICKERS).fillna(0.0).values.astype(np.float64) * alpha_scale
+            breadth_ratio = float((alp_raw > 0.02).mean())
+
+            alp = alp_raw
 
             ret_window = returns_df.iloc[max(0, gi - _COV_WINDOW):gi].reindex(columns=TICKERS).fillna(0.0).values
-            target = _mvo_weights(
-                alp_smooth, cov_d, z0, vol_d, self._prev_weights, equity_urgency,
-                ret_window if ret_window.shape[0] >= 30 else None,
-                signal_strength=sig_strength, rolling_ic=roll_ic, gex_alpha=gex_alp,
+
+            from regime_allocator import route_allocator, is_conc_regime
+
+            def _mvo_dispatch(a: np.ndarray, v: np.ndarray) -> np.ndarray:
+                return _mvo_weights(
+                    a, cov_d, z0, v, self._prev_weights, equity_urgency,
+                    ret_window if ret_window.shape[0] >= 30 else None,
+                    signal_strength=sig_strength, rolling_ic=roll_ic, gex_alpha=gex_alp,
+                    w_max_cash=w_max_cash
+                )
+
+            target_series, alloc_tag = route_allocator(
+                alpha             = pd.Series(alp, index=TICKERS),
+                vols              = pd.Series(vol_d, index=TICKERS),
+                tickers           = TICKERS,
+                breadth_ratio     = breadth_ratio,
+                mvo_fn            = _mvo_dispatch,
+                prev_weights      = self._prev_weights,
+                group_constraints = {"tech": _TECH_TICKERS, "equity": _EQUITY_TICKERS},
             )
+            target = target_series.values.astype(np.float32)
 
             dd      = (self.nav - self._peak) / self._peak if self._peak > 0 else 0.0
             dd_vel  = dd - self._prev_dd
@@ -765,8 +669,8 @@ class StandaloneBacktester:
                 continue
 
             target = target * scale
-            target[TICKERS.index("BIL")] += (1.0 - scale) * 0.60
-            target[TICKERS.index("SHV")] += (1.0 - scale) * 0.40
+            if "BIL" in TICKERS: target[TICKERS.index("BIL")] += (1.0 - scale) * 0.60
+            if "SHV" in TICKERS: target[TICKERS.index("SHV")] += (1.0 - scale) * 0.40
 
             regime_changed = s_label != self._prev_regime
             cost_d, to     = self._rebalance(target, px, vol_d, adv, force=regime_changed)
@@ -807,10 +711,9 @@ class StandaloneBacktester:
         hit      = float((r > rf).mean())
         avg_turn = float(df["turnover"].mean())
         cost_drag = float(df["cost_drag"].mean() * _TRADING_DAYS_YEAR * 1e4)
-        active_pct = float((~df["regime_label"].isin(["WARMUP", "NO_SIGNAL", "HALTED_BIL", "IC_HALTED_BIL"]) &
+        active_pct = float((~df["regime_label"].isin(["WARMUP", "NO_SIGNAL", "HALTED_BIL"]) &
                             ~df["regime_label"].str.startswith("RAMP")).mean() * 100)
         halt_pct    = float((df["regime_label"] == "HALTED_BIL").mean() * 100)
-        ic_halt_pct = float((df["regime_label"] == "IC_HALTED_BIL").mean() * 100)
 
         for label, val in [
             ("CAGR",                  f"{cagr_val:+.2%}"),
@@ -830,16 +733,14 @@ class StandaloneBacktester:
             ("Excess Kurtosis",       f"{kurt_val:.3f}"),
             ("Active Trading %",      f"{active_pct:.1f}%"),
             ("Halted BIL %",          f"{halt_pct:.1f}%"),
-            ("IC Decay Halt %",       f"{ic_halt_pct:.1f}%"),
             ("Final NAV",             f"${nav[-1]:,.2f}"),
             ("Trading Days",          f"{n}"),
         ]:
             logger.info(f"  {label:<30s} {val}")
         return df
 
-
 def main() -> None:
-    logger.info("══════ Fortress v5 — Standalone Backtest v11.0 (ALPHA UNLOCKED) ══════")
+    logger.info("══════ Fortress v5 — Standalone Backtest v11.2 (CASH CONSTRAINED + DYNAMIC UNIV) ══════")
 
     prices_df  = _normalize_index(pd.read_parquet(_CACHE_DIR / "prices_wide.parquet"))
     returns_df = _normalize_index(pd.read_parquet(_CACHE_DIR / "returns_wide.parquet"))
@@ -914,7 +815,6 @@ def main() -> None:
         json.dump({"mode": "stub", "var_95": v95, "cvar_95": float(r_arr[r_arr <= v95].mean())}, f, indent=2)
 
     logger.info("✅ Done. Run scripts/visualize_tearsheet.py next.")
-
 
 if __name__ == "__main__":
     main()

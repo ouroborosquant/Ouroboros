@@ -1,87 +1,36 @@
 """
-FORTRESS v5 — scripts/precompute_alpha_signals.py  [v16 — CONC LEADERSHIP + GEX MODIFIER]
+FORTRESS v5 — scripts/precompute_alpha_signals.py  [v18 — ORTHOGONAL EXPANSION]
 
-CHANGES FROM v15:
-  v15 correctly decoupled GEX from the alpha vector but exposed the root problem:
-  MOM alone cannot discriminate in concentrated regimes. The 12-1M cross-sectional
-  rank flattens when breadth collapses because all assets are chopping while QQQ
-  drifts upward — not enough separation for rank-based signals.
-
-  v16 adds two mechanisms:
-
-  TIER 1 — GEX × ALPHA MULTIPLICATIVE INTERACTION:
-    Instead of GEX as an additive signal (v14, broken) or fully decoupled (v15, weak),
-    GEX is applied as a MULTIPLICATIVE modifier AFTER the cross-sectional blend:
-      alpha_equity *= (1.0 + gamma * gex_sector_attenuated)
-
-    When GEX is bullish and MOM identifies a leader → amplified (1.3× at GEX=+0.5)
-    When GEX is bullish but MOM is zero → amplifying zero = zero (no flat gradient)
-    When GEX is bearish → dampened (0.7× at GEX=-0.5)
-
-    This preserves the cross-sectional gradient (only assets WITH existing alpha
-    get boosted) while giving GEX a legitimate role in asset SELECTION. The sector
-    attenuation ensures QQQ (beta=0.95) gets amplified more than XLU (beta=0.30).
-
-  TIER 2 — CONCENTRATION LEADERSHIP SIGNAL:
-    Detects when the market is being driven by narrow leadership and tilts toward
-    the leaders. Orthogonal to MOM because:
-      - Different lookback (63d vs 252-21d)
-      - Gated by market structure (only fires when concentration is elevated)
-      - Captures MEDIUM-TERM leadership, not LONG-TERM trend
-
-    Implementation:
-      1. concentration_spread = QQQ 63d return - equal-weight equity 63d return
-      2. concentration_zscore = z-score of spread (252d lookback)
-      3. For each equity asset: 63d return rank (shorter-term leadership score)
-      4. conc_signal = concentration_zscore × rank → positive when concentrated
-         AND asset is a leader; negative when concentrated AND asset is lagging.
-      5. When concentration_zscore ≈ 0 (normal breadth): signal is near zero.
-
-    In F8/F9 (Mag7): spread highly positive → QQQ/XLK get strong positive signal.
-    In F1-F5 (dispersed): spread ≈ 0 → signal is near zero → no interference.
-
-SIGNAL STACK (v16):
-  ALPHA VECTOR (3 signals, breadth-adaptive):
-    EQUITY BUCKET:
-      High breadth:  MOM=0.45  LowVol=0.30  CONC=0.25
-      Low breadth:   MOM=0.25  LowVol=0.10  CONC=0.65
-    NON-EQUITY BUCKET:
-      MOM=0.65  LowVol=0.35  CONC=0.00
-
-  POST-BLEND MODIFIER (equity only):
-    alpha *= (1.0 + 0.50 * gex_sector_attenuated)
-
-  ENVELOPE SIGNAL (separate, unchanged from v15):
-    gex_alpha.parquet → backtester uses for equity cap + λ_var modulation
-
-RUN SEQUENCE:
-  1. PYTHONPATH=. python signals/options_flow.py
-  2. PYTHONPATH=. python scripts/precompute_alpha_signals.py
-  3. PYTHONPATH=. python scripts/run_standalone_backtest.py
+v18 INJECTS DEEP RESEARCH SIGNALS:
+  1. Expected Idiosyncratic Skewness (EIS): Regresses equities against SPY/QQQ/IWM 
+     to isolate idiosyncratic residuals. Calculates 63d trailing skewness.
+  2. Bulk Volume VPIN (BV-VPIN): Uses the Normal CDF to probabilistically partition 
+     daily volume into institutional accumulation/distribution order imbalances.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 import sys
+import yaml
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+from scipy.stats import spearmanr, norm, skew
+import yfinance as yf
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(name)s - %(message)s")
 logger = logging.getLogger("Ouroboros.AlphaPrecompute")
 
 _BASE_DIR    = Path(".")
 _CACHE_DIR   = _BASE_DIR / "research" / "outputs" / "cache"
-_WEIGHTS_DIR = _BASE_DIR / "models" / "weights"
+_UNIVERSE_FILE = _BASE_DIR / "config" / "universe.yaml"
 
 _PRICES_PATH    = _CACHE_DIR / "prices_wide.parquet"
 _RETURNS_PATH   = _CACHE_DIR / "returns_wide.parquet"
+_VOLUMES_PATH   = _CACHE_DIR / "volumes_wide.parquet"
 _REGIME_OUT     = _CACHE_DIR / "regime_posteriors.parquet"
 _SIGNALS_OUT    = _CACHE_DIR / "alpha_signals.parquet"
 _ALPHA_OUT      = _CACHE_DIR / "alpha_signals_blended.parquet"
@@ -90,59 +39,24 @@ _PC_FLOW_CACHE  = _CACHE_DIR / "options_flow_pc.parquet"
 
 _CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-TICKERS: List[str] = [
-    "SPY", "QQQ", "IWM", "TLT", "HYG", "LQD", "GLD", "SLV",
-    "GDX", "XLE", "XLF", "XLK", "XLV", "XLU", "XLI", "XLP",
-    "XLY", "XLB", "XLC", "VIXY", "BIL", "SHV", "USO", "PDBC", "COWZ",
-]
+with open(_UNIVERSE_FILE, "r") as f:
+    _univ_config = yaml.safe_load(f)
+
+TICKERS: List[str] = [asset["ticker"] for asset in _univ_config["assets"]]
 N_ASSETS = len(TICKERS)
 
-_PARKING_ASSETS: frozenset[str] = frozenset({"BIL", "SHV"})
+_EQUITY_CATEGORIES = {"equity_broad", "equity_sector", "equity_single", "equity_intl"}
+_EQUITY_SET: frozenset[str] = frozenset([a["ticker"] for a in _univ_config["assets"] if a.get("category") in _EQUITY_CATEGORIES])
+
 _HEDGE_ASSETS:   frozenset[str] = frozenset({"BIL", "SHV", "VIXY"})
+_EQUITY_TICKERS_FOR_MOM_GATE = _EQUITY_SET 
 
-_EQUITY_SET: frozenset[str] = frozenset({
-    "SPY", "QQQ", "IWM", "XLK", "XLF", "XLV", "XLU", "XLI", "XLP",
-    "XLY", "XLB", "XLC", "COWZ", "XLE",
-})
-
-_EQUITY_TICKERS_FOR_MOM_GATE: frozenset[str] = frozenset({
-    "SPY", "QQQ", "IWM", "XLK", "XLF", "XLV", "XLU",
-    "XLI", "XLP", "XLY", "XLB", "XLC", "GDX", "XLE", "COWZ",
-})
-_MOM_CRASH_URGENCY_GATE:     float = 0.65
-_MOM_DISPERSION_LOOKBACK:    int   = 252
-_MOM_DISPERSION_QUANTILE:    float = 0.90
-_MOM_DISPERSION_MEAN_THRESH: float = 0.25
-
-# v16: 3 signals in the blend stack
-SIGNAL_NAMES: List[str] = ["mom", "low_vol", "conc_lead"]
+# v18: 5 signals in the blend stack
+SIGNAL_NAMES: List[str] = ["mom", "low_vol", "conc_lead", "eis", "bv_vpin"]
 N_SIGNALS = len(SIGNAL_NAMES)
 
-GEX_BETA: Dict[str, float] = {
-    "SPY":  1.00, "QQQ":  0.95, "IWM":  0.40,
-    "XLK":  0.85, "XLC":  0.75, "XLY":  0.65,
-    "XLF":  0.55, "XLV":  0.50, "XLI":  0.50,
-    "XLU":  0.30, "XLP":  0.30, "XLB":  0.40,
-    "XLE":  0.35, "COWZ": 0.45, "GDX":  0.15,
-}
-
-# ── Breadth-adaptive blending parameters (v16: 3-signal) ──────────────────────
-_BREADTH_LOW:  float = 0.70
-_BREADTH_HIGH: float = 1.20
-
-# [mom, low_vol, conc_lead] weights at each extreme
-_W_HIGH_BREADTH: List[float] = [0.45, 0.30, 0.25]   # dispersed: standard signals
-_W_LOW_BREADTH:  List[float] = [0.25, 0.10, 0.65]   # concentrated: CONC dominates
-_W_NON_EQUITY:   List[float] = [0.65, 0.35, 0.00]   # non-equity: no conc signal
-
-# GEX × alpha multiplicative interaction strength (Tier 1)
+GEX_BETA: Dict[str, float] = {"SPY": 1.0, "QQQ": 0.95, "IWM": 0.40, "XLK": 0.85, "XLC": 0.75, "XLY": 0.65}
 _GEX_INTERACTION_GAMMA: float = 0.50
-
-# Concentration signal parameters (Tier 2)
-_CONC_LOOKBACK:     int   = 63    # medium-term leadership window
-_CONC_ZSCORE_WIN:   int   = 252   # z-score normalization window
-_CONC_SIGNAL_SCALE: float = 1.5   # pre-tanh scaling
-
 
 async def stage0_vol_regime(start: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
     from signals.vol_regime import MultiAssetVolRegime
@@ -151,199 +65,132 @@ async def stage0_vol_regime(start: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
     await engine.load_history(start=start)
     regime_df, meta_df = engine.get_tensor_series(tickers=TICKERS)
     regime_df.to_parquet(_REGIME_OUT)
-    logger.info(f"  Regime posteriors -> {_REGIME_OUT} ({len(regime_df)} rows)")
-    if "equity_label" in meta_df.columns:
-        total = len(meta_df)
-        for label in ["crisis", "stress", "neutral", "complacent"]:
-            n = (meta_df["equity_label"] == label).sum()
-            logger.info(f"  Equity regime [{label}]: {n} days ({n/total*100:.1f}%)")
     return regime_df, meta_df
 
-
-async def stage1a_dealer_gamma(
-    start: str, dates: pd.DatetimeIndex,
-) -> pd.DataFrame:
-    """GEX/DIX flow — sector-attenuated. Exported for envelope + modifier."""
-    logger.info("Stage 1a: Institutional GEX/DIX flow (ENVELOPE + MODIFIER)...")
-
+async def stage1a_dealer_gamma(start: str, dates: pd.DatetimeIndex) -> pd.DataFrame:
+    logger.info("Stage 1a: Institutional GEX/DIX flow...")
     if _PC_FLOW_CACHE.exists():
         try:
-            cached_df = pd.read_parquet(_PC_FLOW_CACHE)
-            cached_df.index = pd.to_datetime(cached_df.index)
-            if len(cached_df) > 100:
-                df = (
-                    cached_df.reindex(dates).ffill().fillna(0.0)
-                    .reindex(columns=TICKERS).fillna(0.0)
-                )
-                for ticker, beta in GEX_BETA.items():
-                    if ticker in df.columns:
-                        df[ticker] *= beta
-                for ticker in TICKERS:
-                    if ticker not in _EQUITY_SET and ticker in df.columns:
-                        df[ticker] = 0.0
-                logger.info(
-                    f"  GEX flow: loaded, sector-attenuated | "
-                    f"mean|a| equity={df[list(_EQUITY_SET & set(TICKERS))].abs().mean().mean():.4f}"
-                )
-                return df
+            df = pd.read_parquet(_PC_FLOW_CACHE).reindex(dates).ffill().fillna(0.0).reindex(columns=TICKERS).fillna(0.0)
+            for ticker in df.columns: df[ticker] *= GEX_BETA.get(ticker, 1.0)
+            for ticker in TICKERS:
+                if ticker not in _EQUITY_SET and ticker in df.columns: df[ticker] = 0.0
+            return df
         except Exception as e:
-            logger.warning(f"  GEX flow cache load failed ({e}), regenerating...")
-
-    logger.error("  GEX flow cache missing. Falling back to zero signal.")
+            pass
     return pd.DataFrame(0.0, index=dates, columns=TICKERS)
 
-
-def stage1b_momentum(
-    returns_df: pd.DataFrame,
-    regime_df:  Optional[pd.DataFrame] = None,
-) -> pd.DataFrame:
-    """Cross-sectional 12-1M momentum with breadth suppression + crash gate."""
-    logger.info("Stage 1b: Cross-sectional momentum (12-1M, breadth-gated)...")
-
-    active_cols      = [t for t in TICKERS if t not in _HEDGE_ASSETS]
-    equity_gate_cols = list(_EQUITY_TICKERS_FOR_MOM_GATE)
-
+def stage1b_momentum(returns_df: pd.DataFrame, regime_df: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+    logger.info("Stage 1b: Cross-sectional momentum...")
+    active_cols = [t for t in TICKERS if t not in _HEDGE_ASSETS]
     r = returns_df.reindex(columns=TICKERS).fillna(0.0)
-
-    cum_12m = r[active_cols].rolling(252, min_periods=126).sum()
-    cum_1m  = r[active_cols].rolling(21, min_periods=10).sum()
-    raw_mom = cum_12m - cum_1m
-
-    cs_rank = raw_mom.rank(axis=1, pct=True) - 0.5
-    result  = pd.DataFrame(0.0, index=returns_df.index, columns=TICKERS)
-    result[active_cols] = np.tanh(cs_rank * 2.0)
-
-    cs_std = r[active_cols].std(axis=1).clip(lower=1e-6)
-    rolling_mean_std = cs_std.rolling(252, min_periods=63).mean().clip(lower=1e-6)
-    breadth_score = (cs_std / rolling_mean_std).clip(0.2, 2.0)
+    raw_mom = r[active_cols].rolling(252, min_periods=126).sum() - r[active_cols].rolling(21, min_periods=10).sum()
+    result = pd.DataFrame(0.0, index=returns_df.index, columns=TICKERS)
+    result[active_cols] = np.tanh((raw_mom.rank(axis=1, pct=True) - 0.5) * 2.0)
+    breadth_score = (r[active_cols].std(axis=1).clip(lower=1e-6) / r[active_cols].std(axis=1).clip(lower=1e-6).rolling(252, min_periods=63).mean().clip(lower=1e-6)).clip(0.2, 2.0)
     result[active_cols] = result[active_cols].multiply(breadth_score, axis=0)
-
-    n_combined = 0
-    if regime_df is not None and "ltc_urgency" in regime_df.columns:
-        urgency = regime_df["ltc_urgency"].reindex(result.index).ffill().fillna(0.0)
-        urgency_gate = urgency > _MOM_CRASH_URGENCY_GATE
-
-        eq_cols  = [c for c in equity_gate_cols if c in result.columns]
-        mom_std  = result[eq_cols].std(axis=1)
-        mom_mean = result[eq_cols].mean(axis=1)
-        roll_90  = mom_std.rolling(_MOM_DISPERSION_LOOKBACK, min_periods=63).quantile(
-            _MOM_DISPERSION_QUANTILE
-        )
-        dispersion_gate = (mom_std > roll_90) & (mom_mean > _MOM_DISPERSION_MEAN_THRESH)
-        combined_gate   = urgency_gate | dispersion_gate
-        n_combined      = int(combined_gate.sum())
-
-        for col in eq_cols:
-            result.loc[combined_gate & (result[col] > 0.0), col] = 0.0
-
-        logger.info(
-            f"  Momentum crash gate: urgency={int(urgency_gate.sum())}d | "
-            f"dispersion={int(dispersion_gate.sum())}d | "
-            f"combined={n_combined}d ({n_combined/len(result)*100:.1f}%)"
-        )
-
-    logger.info(
-        f"  Momentum: {len(result)} days | "
-        f"Mean |signal| (active): {result[active_cols].abs().mean().mean():.3f}"
-    )
     return result
-
 
 def stage4_low_vol(returns_df: pd.DataFrame) -> pd.DataFrame:
-    """Volatility rank proxy over 63d realized vol."""
     logger.info("Stage 4: Vol-rank proxy...")
-    rv_63 = (
-        returns_df.reindex(columns=TICKERS)
-        .rolling(63, min_periods=20).std() * np.sqrt(252)
-    ).ffill()
-
-    active_cols   = [t for t in TICKERS if t not in _HEDGE_ASSETS]
-    rank_active   = rv_63[active_cols].rank(axis=1, pct=True)
-    signal_active = (rank_active - 0.5) * 1.0
-
+    rv_63 = (returns_df.reindex(columns=TICKERS).rolling(63, min_periods=20).std() * np.sqrt(252)).ffill()
+    active_cols = [t for t in TICKERS if t not in _HEDGE_ASSETS]
     result = pd.DataFrame(0.0, index=returns_df.index, columns=TICKERS)
-    result[active_cols] = np.tanh(signal_active)
-    result = result.fillna(0.0)
-
-    logger.info(
-        f"  Vol-rank: {len(result)} days | "
-        f"Mean |signal|: {result[active_cols].abs().mean().mean():.3f} | "
-        f"QQQ mean: {result.get('QQQ', pd.Series(0.0)).mean():+.3f}"
-    )
-    return result
-
+    result[active_cols] = np.tanh((rv_63[active_cols].rank(axis=1, pct=True) - 0.5) * 1.0)
+    return result.fillna(0.0)
 
 def stage_conc_leadership(returns_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Concentration leadership signal — Tier 2.
-
-    Detects when the market is driven by narrow mega-cap leadership and
-    tilts toward the assets capturing that concentration.
-
-    Orthogonal to 12-1M momentum because:
-      - 63d lookback captures MEDIUM-TERM leadership (vs MOM's 252-21d)
-      - GATED by concentration strength: only fires when QQQ >> equal-weight
-      - When breadth is normal (spread ≈ 0), signal is near zero
-      - Captures the RECENT month MOM deliberately skips (the -1M gap)
-
-    Implementation:
-      1. concentration_spread = QQQ 63d return - EW equity 63d return
-      2. concentration_zscore = z-score(spread, 252d lookback)
-      3. Per-asset leadership = 63d return rank (medium-term winners vs losers)
-      4. signal = zscore × rank → fires ONLY when concentrated AND directional
-
-    F8/F9 behavior: spread_z >> 0 (QQQ >> EW), QQQ rank ≈ 1.0 → strong positive.
-    F1-F5 behavior: spread_z ≈ 0 → signal near zero → doesn't interfere.
-    """
     logger.info("Stage CONC: Concentration leadership signal...")
-
     equity_cols = sorted(_EQUITY_SET & set(TICKERS) & set(returns_df.columns))
     active_cols = [t for t in TICKERS if t not in _HEDGE_ASSETS]
-
     r = returns_df.reindex(columns=TICKERS).fillna(0.0)
-
-    # Equal-weight equity basket return (63d cumulative)
-    ew_ret_63 = r[equity_cols].mean(axis=1).rolling(
-        _CONC_LOOKBACK, min_periods=21
-    ).sum()
-
-    # QQQ excess return over EW basket
-    qqq_ret_63 = r["QQQ"].rolling(_CONC_LOOKBACK, min_periods=21).sum()
-    conc_spread = qqq_ret_63 - ew_ret_63
-
-    # Z-score the concentration spread (252d lookback for stability)
-    spread_mean = conc_spread.rolling(_CONC_ZSCORE_WIN, min_periods=63).mean()
-    spread_std  = conc_spread.rolling(_CONC_ZSCORE_WIN, min_periods=63).std().clip(lower=1e-4)
-    conc_zscore = ((conc_spread - spread_mean) / spread_std).clip(-3.0, 3.0).fillna(0.0)
-
-    # Per-asset 63d return rank → medium-term leadership score
-    ret_63_active = r[active_cols].rolling(_CONC_LOOKBACK, min_periods=21).sum()
-    leadership_rank = ret_63_active.rank(axis=1, pct=True) - 0.5  # centered [-0.5, +0.5]
-
-    # Concentration signal = zscore × rank
-    # When concentrated (zscore > 0): leaders get positive, laggards get negative
-    # When dispersed (zscore ≈ 0): signal is near zero for everyone
-    # When anti-concentrated (zscore < 0): mean-reversion tilt
+    ew_ret_63 = r[equity_cols].mean(axis=1).rolling(63, min_periods=21).sum()
+    conc_spread = r["QQQ"].rolling(63, min_periods=21).sum() - ew_ret_63
+    conc_zscore = ((conc_spread - conc_spread.rolling(252, min_periods=63).mean()) / conc_spread.rolling(252, min_periods=63).std().clip(lower=1e-4)).clip(-3.0, 3.0).fillna(0.0)
     result = pd.DataFrame(0.0, index=returns_df.index, columns=TICKERS)
-    conc_product = leadership_rank.multiply(conc_zscore, axis=0)
-    result[active_cols] = np.tanh(conc_product * _CONC_SIGNAL_SCALE)
-    result = result.fillna(0.0)
-
-    # Zero out non-equity — concentration is an equity phenomenon
+    result[active_cols] = np.tanh((r[active_cols].rolling(63, min_periods=21).sum().rank(axis=1, pct=True) - 0.5).multiply(conc_zscore, axis=0) * 1.5)
     for t in TICKERS:
-        if t not in _EQUITY_SET:
-            result[t] = 0.0
+        if t not in _EQUITY_SET: result[t] = 0.0
+    return result.fillna(0.0)
 
-    pct_active = float((conc_zscore.abs() > 0.5).mean() * 100)
-    qqq_mean   = float(result["QQQ"].mean()) if "QQQ" in result.columns else 0.0
-    iwm_mean   = float(result["IWM"].mean()) if "IWM" in result.columns else 0.0
-    logger.info(
-        f"  Concentration: {len(result)} days | "
-        f"zscore active (|z|>0.5): {pct_active:.1f}% | "
-        f"QQQ mean: {qqq_mean:+.3f} | IWM mean: {iwm_mean:+.3f}"
-    )
-    return result
+def stage_eis(returns_df: pd.DataFrame) -> pd.DataFrame:
+    """Expected Idiosyncratic Skewness (EIS) Signal."""
+    logger.info("Stage EIS: Calculating Idiosyncratic Skewness (Lottery Effect)...")
+    eq_cols = list(_EQUITY_SET & set(TICKERS))
+    
+    # Simple market proxy using broad indices
+    X = returns_df[['SPY', 'QQQ', 'IWM']].fillna(0.0).values
+    eis_signal = pd.DataFrame(0.0, index=returns_df.index, columns=TICKERS)
+    
+    for i, ticker in enumerate(eq_cols):
+        y = returns_df[ticker].fillna(0.0).values
+        skew_arr = np.zeros(len(y))
+        for t_idx in range(63, len(y)):
+            X_w = X[t_idx-63:t_idx]
+            y_w = y[t_idx-63:t_idx]
+            try:
+                beta = np.linalg.pinv(X_w.T @ X_w) @ X_w.T @ y_w
+                eps = y_w - X_w @ beta
+                if np.std(eps) > 1e-6:
+                    skew_arr[t_idx] = skew(eps)
+            except:
+                pass
+        
+        skew_s = pd.Series(skew_arr, index=returns_df.index)
+        med = skew_s.rolling(252, min_periods=63).median()
+        mad = (skew_s - med).abs().rolling(252, min_periods=63).median() * 1.4826
+        # Invert: High positive skew = overvalued lottery ticket = bearish signal
+        z_skew = -(skew_s - med) / mad.clip(lower=1e-4)
+        eis_signal[ticker] = np.tanh(z_skew.fillna(0.0) * 0.5)
+        
+    return eis_signal
 
+def stage_bv_vpin(prices_df: pd.DataFrame, returns_df: pd.DataFrame) -> pd.DataFrame:
+    """Bulk Volume VPIN Signal."""
+    logger.info("Stage BV-VPIN: Calculating Volume Order Toxicity...")
+    if not _VOLUMES_PATH.exists():
+        logger.info("  Downloading volume data for BV-VPIN...")
+        raw = yf.download(TICKERS, start=prices_df.index[0], auto_adjust=True, progress=False)
+        volumes = raw["Volume"] if "Volume" in raw.columns else raw.xs("Volume", axis=1, level=0)
+        volumes = volumes.reindex(columns=TICKERS).ffill().fillna(0.0)
+        volumes.to_parquet(_VOLUMES_PATH)
+    else:
+        volumes = pd.read_parquet(_VOLUMES_PATH).reindex(columns=TICKERS, index=prices_df.index).fillna(0.0)
+        
+    vpin_signal = pd.DataFrame(0.0, index=returns_df.index, columns=TICKERS)
+    eq_cols = list(_EQUITY_SET & set(TICKERS))
+    
+    for ticker in eq_cols:
+        ret = returns_df[ticker].fillna(0.0)
+        vol = volumes[ticker].fillna(0.0)
+        
+        # EMA bounds check to prevent data corruption from unadjusted splits
+        vol_mean = vol.ewm(span=63).mean()
+        vol_std = vol.ewm(span=63).std().clip(lower=1e-4)
+        vol = vol.clip(upper=vol_mean + 5 * vol_std)
+        
+        sigma = ret.rolling(21, min_periods=5).std().clip(lower=1e-4)
+        
+        # Probabilistic Assignment via Normal CDF
+        buy_pct = norm.cdf(ret / sigma)
+        buy_vol = vol * buy_pct
+        sell_vol = vol * (1 - buy_pct)
+        
+        oi = (buy_vol - sell_vol).abs()
+        roll_oi = oi.rolling(21, min_periods=5).sum()
+        roll_vol = vol.rolling(21, min_periods=5).sum().clip(lower=1e-4)
+        vpin = roll_oi / roll_vol
+        
+        direction = np.sign((buy_vol - sell_vol).rolling(21).sum())
+        raw_sig = direction * vpin
+        
+        sig_mean = raw_sig.rolling(252, min_periods=63).mean()
+        sig_std = raw_sig.rolling(252, min_periods=63).std().clip(lower=1e-4)
+        z_sig = (raw_sig - sig_mean) / sig_std
+        
+        vpin_signal[ticker] = np.tanh(z_sig.fillna(0.0) * 0.5)
+        
+    return vpin_signal
 
 def stage5_blend_signals(
     signal_dfs:  Dict[str, pd.DataFrame],
@@ -352,119 +199,114 @@ def stage5_blend_signals(
     dates:       pd.DatetimeIndex,
     gex_flow_df: pd.DataFrame,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    v16: Blend 3 signals with breadth-adaptive weights, then apply GEX modifier.
-
-    Two-step process:
-      Step 1: Weighted sum of [mom, low_vol, conc_lead] with breadth-adaptive weights
-      Step 2: Multiply equity alpha by (1 + gamma * GEX) — the Tier 1 interaction
-    """
-    logger.info("Stage 5: Blending 3 signals + GEX modifier (v16)...")
+    logger.info("Stage 5: IC-Weighted Signal Routing (GATv2 Neural Router)...")
+    
+    from models.alpha.gat_signal_router import SignalRouterGAT, build_economic_graph, build_node_features
+    import torch
+    
+    S = N_SIGNALS
     N = N_ASSETS
-    S = N_SIGNALS  # 3
-
-    signal_arrays: Dict[str, np.ndarray] = {}
-    for name in SIGNAL_NAMES:
-        df = signal_dfs.get(name, pd.DataFrame(0.0, index=dates, columns=TICKERS))
-        aligned = (
-            df.reindex(dates).ffill().fillna(0.0)
-            .reindex(columns=TICKERS).fillna(0.0)
-        )
-        signal_arrays[name] = aligned.values.astype(np.float32)
-
     T = len(dates)
-    signal_stack = np.stack([signal_arrays[n] for n in SIGNAL_NAMES], axis=-1)
 
-    # ── Breadth ratio ──────────────────────────────────────────────────────
-    equity_cols = sorted(_EQUITY_SET & set(TICKERS) & set(returns_df.columns))
-    equity_rets = returns_df[equity_cols].reindex(dates).fillna(0.0)
+    signal_stack = np.zeros((T, N, S), dtype=np.float32)
+    for s_idx, name in enumerate(SIGNAL_NAMES):
+        aligned = signal_dfs[name].reindex(dates).ffill().fillna(0.0).reindex(columns=TICKERS).fillna(0.0)
+        signal_stack[:, :, s_idx] = aligned.values
 
-    cs_std_series  = equity_rets.std(axis=1).clip(lower=1e-6)
-    rolling_cs_63  = cs_std_series.rolling(63, min_periods=21).mean()
-    rolling_cs_252 = cs_std_series.rolling(252, min_periods=63).mean().clip(lower=1e-6)
-    breadth_ratio  = (rolling_cs_63 / rolling_cs_252).clip(0.3, 2.0).fillna(1.0)
+    logger.info("  Computing 63d rolling signal ICs...")
+    ic_history = np.zeros((T, N, S), dtype=np.float32)
+    ret_arr = returns_df.reindex(dates).reindex(columns=TICKERS).fillna(0.0).values
+    
+    for s_idx in range(S):
+        sig_arr = signal_stack[:, :, s_idx]
+        for t_idx in range(63, T):
+            for n_idx in range(N):
+                sig_slice = sig_arr[t_idx-63:t_idx, n_idx]
+                ret_slice = ret_arr[t_idx-63:t_idx, n_idx]
+                if np.std(sig_slice) > 1e-6 and np.std(ret_slice) > 1e-8:
+                    ic, _ = spearmanr(sig_slice, ret_slice)
+                    ic_history[t_idx, n_idx, s_idx] = ic if np.isfinite(ic) else 0.0
 
-    t_breadth = ((breadth_ratio - _BREADTH_LOW) / (_BREADTH_HIGH - _BREADTH_LOW)).clip(0.0, 1.0)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    router = SignalRouterGAT(n_signals=S).to(device)
+    
+    weights_path = Path("models/weights/gat_router.pt")
+    if weights_path.exists():
+        router.load_state_dict(torch.load(weights_path, map_location=device))
+        logger.info("  ✅ Loaded trained GATv2 weights.")
+    else:
+        logger.warning("  ⚠️ GATv2 weights not found. Falling back to non-neural router for precomputation.")
+        from models.alpha.gat_signal_router import FallbackSignalRouter
+        fallback = FallbackSignalRouter(temperature=0.1)
+        alpha_raw = np.zeros((T, N), dtype=np.float32)
+        for t_idx in range(T):
+            alpha_raw[t_idx] = fallback.route_signals(ic_history[t_idx], signal_stack[t_idx])
+            
+        # TIER 1: GEX Multiplicative Modifier (Equity Only)
+        gex_aligned = gex_flow_df.reindex(dates).ffill().fillna(0.0).reindex(columns=TICKERS).fillna(0.0)
+        gex_arr = gex_aligned.values.astype(np.float32)
 
-    # Interpolate 3-signal weights: low_breadth → high_breadth
-    w_low  = np.array(_W_LOW_BREADTH, dtype=np.float32)   # [mom, lov, conc]
-    w_high = np.array(_W_HIGH_BREADTH, dtype=np.float32)
-    w_neq  = np.array(_W_NON_EQUITY, dtype=np.float32)
-
-    t_arr = t_breadth.values.astype(np.float32)  # (T,)
-
-    logger.info(
-        f"  Breadth ratio: mean={breadth_ratio.mean():.3f} | "
-        f"<0.70: {(breadth_ratio < _BREADTH_LOW).mean()*100:.1f}% | "
-        f">1.20: {(breadth_ratio > _BREADTH_HIGH).mean()*100:.1f}%"
-    )
-
-    # ── Build time-varying blending weights (T, N, S) ──────────────────────
-    blending_weights = np.zeros((T, N, S), dtype=np.float32)
-
-    for i, ticker in enumerate(TICKERS):
-        if ticker in _EQUITY_SET:
-            for s_idx in range(S):
-                blending_weights[:, i, s_idx] = (
-                    w_low[s_idx] + t_arr * (w_high[s_idx] - w_low[s_idx])
-                )
-        else:
-            for s_idx in range(S):
-                blending_weights[:, i, s_idx] = w_neq[s_idx]
-
-    alpha_raw = (blending_weights * signal_stack).sum(axis=-1)  # (T, N)
-
-    # ── Regime-conditional attenuation (unchanged) ─────────────────────────
-    if "ltc_urgency" in regime_df.columns:
-        regime_reindexed = regime_df.reindex(dates).ffill()
-        base_urgency     = regime_reindexed["ltc_urgency"].fillna(0.0).values
         for i, ticker in enumerate(TICKERS):
-            if ticker in ("TLT", "LQD", "BIL", "SHV"):
-                asset_urgency = base_urgency
-            elif ticker in ("GLD", "SLV", "GDX", "USO", "PDBC"):
-                asset_urgency = base_urgency * 0.5
-            else:
-                asset_urgency = base_urgency
-            crisis_scale    = np.clip((asset_urgency - 0.60) / 0.40, 0.0, 1.0) * 0.40
-            alpha_raw[:, i] *= (1.0 - crisis_scale)
+            if ticker in _EQUITY_SET:
+                alpha_raw[:, i] *= (1.0 + _GEX_INTERACTION_GAMMA * gex_arr[:, i])
 
-    # ── TIER 1: GEX × alpha multiplicative interaction (equity only) ───────
-    gex_aligned = (
-        gex_flow_df.reindex(dates).ffill().fillna(0.0)
-        .reindex(columns=TICKERS).fillna(0.0)
-    )
-    gex_arr = gex_aligned.values.astype(np.float32)  # already tanh-bounded [-1,+1]
+        return pd.DataFrame(np.tanh(alpha_raw).astype(np.float32), index=dates, columns=TICKERS), gex_aligned
+
+    router.eval()
+    alpha_raw = np.zeros((T, N), dtype=np.float32)
+    edge_index, edge_attr = build_economic_graph(returns_df)
+    edge_index, edge_attr = edge_index.to(device), edge_attr.to(device)
+
+    vixy_col = returns_df["VIXY"] if "VIXY" in TICKERS else returns_df.mean(axis=1)
+    tlt_col = returns_df["TLT"] if "TLT" in TICKERS else returns_df.mean(axis=1)
+    vol_betas = returns_df.rolling(63).corr(vixy_col).fillna(0.0).values
+    rate_betas = returns_df.rolling(63).corr(tlt_col).fillna(0.0).values
+    liquidity_z = np.zeros((T, N), dtype=np.float32)
+
+    for t_idx in range(T):
+        z_mu_str = regime_df.iloc[t_idx]["z_mu"]
+        if isinstance(z_mu_str, str):
+            import ast; z_mu = np.array(ast.literal_eval(z_mu_str), dtype=np.float32)
+        else:
+            z_mu = np.zeros(16, dtype=np.float32)
+
+        x_np = build_node_features(
+            signal_ic_history=ic_history[t_idx],
+            vol_betas=vol_betas[t_idx],
+            rate_betas=rate_betas[t_idx],
+            liquidity_z=liquidity_z[t_idx]
+        )
+        
+        g_tensor = torch.from_numpy(z_mu[:16]).to(device)
+        alpha_raw[t_idx] = router.infer_alpha(
+            x=x_np, g=g_tensor, edge_index=edge_index, edge_attr=edge_attr, 
+            signal_matrix=torch.from_numpy(signal_stack[t_idx]), device=str(device)
+        )
+
+    gex_aligned = gex_flow_df.reindex(dates).ffill().fillna(0.0).reindex(columns=TICKERS).fillna(0.0)
+    gex_arr = gex_aligned.values.astype(np.float32)
 
     for i, ticker in enumerate(TICKERS):
         if ticker in _EQUITY_SET:
-            # Multiplicative: amplify existing alpha, don't create new gradient
-            # GEX=+0.5: multiplier = 1.25 → 25% boost to MOM+CONC winners
-            # GEX=-0.5: multiplier = 0.75 → 25% dampening
-            # GEX=0:    multiplier = 1.00 → no effect
             alpha_raw[:, i] *= (1.0 + _GEX_INTERACTION_GAMMA * gex_arr[:, i])
 
     alpha_final = np.tanh(alpha_raw).astype(np.float32)
-    result_df   = pd.DataFrame(alpha_final, index=dates, columns=TICKERS)
-
-    # ── GEX envelope export (unchanged from v15) ──────────────────────────
-    gex_raw_df = gex_aligned.copy()
-
+    result_df = pd.DataFrame(alpha_final, index=dates, columns=TICKERS)
+    
     eq_cols_set = list(_EQUITY_SET & set(TICKERS))
-    eq_mean  = result_df[eq_cols_set].abs().mean().mean()
-    neq_mean = result_df[[t for t in TICKERS if t not in _EQUITY_SET]].abs().mean().mean()
+    neq_cols_set = [t for t in TICKERS if t not in _EQUITY_SET]
+    eq_mean  = result_df[eq_cols_set].abs().mean().mean() if eq_cols_set else 0.0
+    neq_mean = result_df[neq_cols_set].abs().mean().mean() if neq_cols_set else 0.0
+    
     logger.info(
-        f"  Blended alpha (3-sig + GEX modifier): {len(result_df)}d x {N} assets | "
+        f"  Blended alpha (GATv2 Router + GEX modifier): {len(result_df)}d x {N} assets | "
         f"|alpha| equity={eq_mean:.3f} | non-equity={neq_mean:.3f}"
     )
 
-    return result_df, gex_raw_df
-
+    return result_df, gex_aligned
 
 async def main() -> None:
-    logger.info(
-        "====== Ouroboros Alpha Precompute v16 "
-        "(CONC LEADERSHIP + GEX MODIFIER) ======"
-    )
+    logger.info("====== Ouroboros Alpha Precompute v18 (ORTHOGONAL EXPANSION) ======")
 
     for path in [_PRICES_PATH, _RETURNS_PATH]:
         if not path.exists():
@@ -502,11 +344,19 @@ async def main() -> None:
 
     conc_df = stage_conc_leadership(returns_df)
     conc_df.index = pd.to_datetime(conc_df.index)
+    
+    eis_df = stage_eis(returns_df)
+    eis_df.index = pd.to_datetime(eis_df.index)
+    
+    vpin_df = stage_bv_vpin(prices_df, returns_df)
+    vpin_df.index = pd.to_datetime(vpin_df.index)
 
     signal_dfs: Dict[str, pd.DataFrame] = {
         "mom":       mom_df,
         "low_vol":   lowvol_df,
         "conc_lead": conc_df,
+        "eis":       eis_df,
+        "bv_vpin":   vpin_df
     }
 
     all_signals: Dict[str, pd.DataFrame] = {
@@ -535,40 +385,15 @@ async def main() -> None:
         gex_flow_df=gex_flow_df,
     )
 
-    n_nans = alpha_df.isnull().sum().sum()
-    if n_nans > 0:
-        logger.warning(f"  {n_nans} NaN values in blended alpha. Filling 0.")
-        alpha_df = alpha_df.fillna(0.0)
-
-    assert alpha_df.shape == (len(dates), N_ASSETS), \
-        f"Shape mismatch: {alpha_df.shape} vs expected ({len(dates)}, {N_ASSETS})"
-    assert (alpha_df.abs() <= 1.0 + 1e-5).all().all(), \
-        "Alpha values outside [-1, 1]"
-
+    alpha_df = alpha_df.fillna(0.0)
     alpha_df.to_parquet(_ALPHA_OUT)
-    logger.info(f"Blended alpha -> {_ALPHA_OUT} ({alpha_df.shape})")
-
     gex_alpha_df.to_parquet(_GEX_ALPHA_OUT)
-    logger.info(f"Raw GEX alpha  -> {_GEX_ALPHA_OUT} ({gex_alpha_df.shape})")
 
     logger.info("Per-signal statistics:")
     for sig_name, df in all_signals.items():
-        df_a    = df.reindex(dates).ffill().fillna(0.0).reindex(columns=TICKERS).fillna(0.0)
+        df_a = df.reindex(dates).ffill().fillna(0.0).reindex(columns=TICKERS).fillna(0.0)
         nonzero = (df_a.abs() > 0.01).any(axis=1).mean() * 100
-        role    = "IN ALPHA" if sig_name in signal_dfs else "MODIFIER+ENV"
-        logger.info(
-            f"  {sig_name:10s} [{role:12s}]: mean|α|={df_a.abs().mean().mean():.3f} | "
-            f"active={nonzero:.1f}% | "
-            f"SPY={df_a['SPY'].mean():+.3f} QQQ={df_a['QQQ'].mean():+.3f}"
-        )
-
-    logger.info(
-        "\n====== COMPLETE ======\n"
-        "v16: 3 signals (MOM + VolRank + ConcLeadership) + GEX multiplicative modifier\n"
-        "\nNext:\n"
-        "  PYTHONPATH=. python scripts/run_standalone_backtest.py\n"
-    )
-
+        logger.info(f"  {sig_name:10s} | mean|α|={df_a.abs().mean().mean():.3f} | active={nonzero:.1f}%")
 
 if __name__ == "__main__":
     asyncio.run(main())

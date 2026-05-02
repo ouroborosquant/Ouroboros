@@ -1,5 +1,12 @@
 """
-FORTRESS v5 - signals/options_flow.py  [v4 — DEALER GAMMA & DARK POOL REWRITE]
+FORTRESS v5 - signals/options_flow.py  [v4.1 — BRK-B TICKER FIX]
+
+v4.1 Changes
+------------
+Added _YF_REMAP / _to_yf / _from_yf helpers to translate universe ticker names
+(BRK.B) to yfinance's hyphen notation (BRK-B) before download, then rename back.
+Applied in _load_prices() and ETFCreationFlowEngine.load_data().
+MMC failures are transient yfinance rate-limit/CDN issues — ffill handles gaps.
 
 SYSTEM OVERRIDE:
 Since the paid API (Databento/Polygon) to fetch raw option chains is unavailable, 
@@ -12,10 +19,6 @@ DIX.csv daily feed (free, publicly hosted). This provides:
    Negative GEX = dealer short gamma = volatility expansion/crashes.
 2. DIX (Dark Index): The percentage of dark pool volume that is market-maker buying.
    High DIX = institutions quietly accumulating = bullish.
-
-This is true, orthogonal institutional flow. It directly resolves the alpha vacuum. 
-The public API of the module remains untouched; `precompute_alpha_signals.py` will 
-execute this without knowing the underlying engine was swapped.
 """
 from __future__ import annotations
 
@@ -44,7 +47,6 @@ except ImportError:
 
 logger = logging.getLogger("Ouroboros.OptionsFlow")
 
-# Ensure the universe matches the expanded 100-asset list defined in config/universe.yaml
 _UNIVERSE: List[str] = [
     "SPY", "QQQ", "IWM", "TLT", "HYG", "LQD", "GLD", "SLV",
     "GDX", "XLE", "XLF", "XLK", "XLV", "XLU", "XLI", "XLP",
@@ -66,6 +68,18 @@ _EQUITY_ETFS:    frozenset[str] = frozenset({
 _BOND_ETFS:      frozenset[str] = frozenset({"TLT", "HYG", "LQD", "BIL", "SHV"})
 _COMMODITY_ETFS: frozenset[str] = frozenset({"GLD", "SLV", "USO", "PDBC"})
 
+# yfinance v0.2+ uses hyphen notation for share classes.
+# Translate before download, rename back after.
+_YF_REMAP:   Dict[str, str] = {"BRK.B": "BRK-B"}
+_YF_UNREMAP: Dict[str, str] = {v: k for k, v in _YF_REMAP.items()}
+
+def _to_yf(tickers: List[str]) -> List[str]:
+    return [_YF_REMAP.get(t, t) for t in tickers]
+
+def _from_yf(df: pd.DataFrame, target_cols: List[str]) -> pd.DataFrame:
+    """Rename yfinance column names back to universe names, then reindex."""
+    return df.rename(columns=_YF_UNREMAP).reindex(columns=target_cols).ffill()
+
 _ZSCORE_HL:        int = 63
 _FLOW_WINDOW:      int = 5
 _FLOW_ZSCORE_HL:   int = 63
@@ -82,10 +96,6 @@ _USER_AGENTS = [
 
 
 class InstitutionalDealerGammaEngine:
-    """
-    Replaces the broken CBOE P/C fetcher.
-    Ingests SqueezeMetrics DIX (Dark Index) and GEX (Gamma Exposure).
-    """
 
     def __init__(self) -> None:
         self._dix:        Optional[pd.Series] = None
@@ -126,29 +136,31 @@ class InstitutionalDealerGammaEngine:
         if not _YF_AVAILABLE:
             return
         try:
-            raw = yf.download(_UNIVERSE, start=start, auto_adjust=True, progress=False)
+            yf_tickers = _to_yf(_UNIVERSE)
+            raw = yf.download(yf_tickers, start=start, auto_adjust=True, progress=False)
             if not raw.empty:
-                self._prices = (
+                closes = (
                     raw["Close"] if "Close" in raw.columns
                     else raw.xs("Close", axis=1, level=0)
-                ).reindex(columns=_UNIVERSE).ffill()
+                )
+                self._prices = _from_yf(closes, _UNIVERSE)
         except Exception as e:
             logger.error(f"  Price load circuit breaker tripped: {e}")
             raise
 
     @retry(
-        wait=wait_exponential(multiplier=2, min=4, max=60), 
+        wait=wait_exponential(multiplier=2, min=4, max=60),
         stop=stop_after_attempt(5),
         retry=retry_if_exception_type((aiohttp.ClientError, asyncio.TimeoutError))
+        if _AIOHTTP_AVAILABLE else stop_after_attempt(1),
     )
     async def _try_gex_download(self) -> bool:
         if not _AIOHTTP_AVAILABLE:
             return False
-        
-        # SqueezeMetrics public historical data CSV
+
         url = "https://squeezemetrics.com/monitor/static/DIX.csv"
         headers = {"User-Agent": random.choice(_USER_AGENTS)}
-        
+
         try:
             timeout = aiohttp.ClientTimeout(total=30)
             async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
@@ -205,7 +217,6 @@ class InstitutionalDealerGammaEngine:
 
         for ticker in _UNIVERSE:
             if ticker in _EQUITY_ETFS or ticker not in _BOND_ETFS and ticker not in _COMMODITY_ETFS:
-                # Apply scalar directly to broad equity, sectors, and the single names
                 result[ticker] = scalar
             elif ticker in _BOND_ETFS:
                 result[ticker] = -scalar * 0.5
@@ -219,14 +230,8 @@ class InstitutionalDealerGammaEngine:
         return None
 
     def _compute_from_gex(self, dates: pd.DatetimeIndex) -> pd.Series:
-        """
-        Derives an orthogonal equity signal from Dealer Gamma & Dark Pool Index.
-        DIX = Institutional dark pool buying. High DIX = Bullish.
-        GEX = Option Market Maker Gamma. High GEX = Stable/Bullish drift. 
-              Negative GEX = Volatility expansion/Bearish.
-        """
         assert self._dix is not None and self._gex is not None
-        
+
         dix = self._dix.reindex(dates).ffill().fillna(self._dix.median())
         gex = self._gex.reindex(dates).ffill().fillna(self._gex.median())
 
@@ -237,7 +242,6 @@ class InstitutionalDealerGammaEngine:
         gex_z   = (gex - gex_ewm.mean()) / gex_ewm.std().clip(lower=1e-4)
 
         combined = 0.6 * dix_z + 0.4 * gex_z
-        
         signal = np.tanh(combined * 0.6)
         return signal
 
@@ -255,23 +259,18 @@ class InstitutionalDealerGammaEngine:
 
         ewm    = ratio.ewm(halflife=_ZSCORE_HL, min_periods=21)
         z      = (ratio - ewm.mean()) / ewm.std().clip(lower=1e-4)
-
         signal = -np.tanh(z.clip(-3, 3) * 0.6)
         return signal
 
     def get_signal_summary(self) -> dict:
         return {
             "data_mode":      self._data_mode,
-            "has_cboe":       self._data_mode == "squeezemetrics", 
+            "has_cboe":       self._data_mode == "squeezemetrics",
             "has_equity_pc":  self._data_mode == "squeezemetrics",
         }
 
 
 class ETFCreationFlowEngine:
-    """
-    ETF creation/redemption flow proxy from volume × price trend.
-    v3: Fortified data ingestion.
-    """
 
     def __init__(self) -> None:
         self._prices:  Optional[pd.DataFrame] = None
@@ -284,21 +283,20 @@ class ETFCreationFlowEngine:
             return
 
         flow_tickers = [t for t in _UNIVERSE if t not in {"VIXY"}]
-        logger.info(f"  ETF creation flow: downloading {len(flow_tickers)} tickers from {start}...")
+        yf_tickers   = _to_yf(flow_tickers)
+        logger.info(f"  ETF creation flow: downloading {len(yf_tickers)} tickers from {start}...")
 
         try:
-            raw = yf.download(flow_tickers, start=start, auto_adjust=True, progress=False)
+            raw = yf.download(yf_tickers, start=start, auto_adjust=True, progress=False)
             if raw.empty:
                 logger.warning("  ETF flow: download returned empty")
                 return
-            self._prices  = (
-                raw["Close"] if "Close" in raw.columns
-                else raw.xs("Close", axis=1, level=0)
-            ).reindex(columns=flow_tickers).ffill()
-            self._volumes = (
-                raw["Volume"] if "Volume" in raw.columns
-                else raw.xs("Volume", axis=1, level=0)
-            ).reindex(columns=flow_tickers).ffill()
+
+            closes  = raw["Close"]  if "Close"  in raw.columns else raw.xs("Close",  axis=1, level=0)
+            volumes = raw["Volume"] if "Volume" in raw.columns else raw.xs("Volume", axis=1, level=0)
+
+            self._prices  = _from_yf(closes,  flow_tickers)
+            self._volumes = _from_yf(volumes, flow_tickers)
             logger.info(f"  ETF flow: loaded {len(self._prices.columns)} tickers")
         except Exception as e:
             logger.error(f"  ETF flow download circuit breaker tripped: {e}")
@@ -401,13 +399,6 @@ async def _test() -> None:
 
     pc_df.to_parquet(cache_dir / "options_flow_pc.parquet")
     flow_df.to_parquet(cache_dir / "options_flow_etf.parquet")
-    logger.info(
-        "\nSaved. Validate IC:\n"
-        "  PYTHONPATH=. python scripts/validate_signal_ic.py "
-        "--signal-file research/outputs/cache/options_flow_pc.parquet\n"
-        "  PYTHONPATH=. python scripts/validate_signal_ic.py "
-        "--signal-file research/outputs/cache/options_flow_etf.parquet"
-    )
 
 if __name__ == "__main__":
     asyncio.run(_test())

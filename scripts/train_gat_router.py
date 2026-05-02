@@ -27,7 +27,7 @@ with open("config/universe.yaml", "r") as f:
     _univ = yaml.safe_load(f)
 TICKERS = [a["ticker"] for a in _univ["assets"]]
 N_ASSETS = len(TICKERS)
-SIGNAL_NAMES = ["mom", "low_vol", "conc_lead"]
+SIGNAL_NAMES = ["mom", "low_vol", "conc_lead", "night_effect", "pca_statarb"]
 N_SIGNALS = len(SIGNAL_NAMES)
 
 def main():

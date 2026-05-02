@@ -32,7 +32,7 @@ N_LAYERS:     int = 3
 DROPOUT:      float = 0.15
 K_NEIGHBORS:  int = 5    
 
-SIGNAL_NAMES: List[str] = ["mom", "low_vol", "conc_lead", "eis", "bv_vpin"]
+SIGNAL_NAMES: List[str] = ["mom", "low_vol", "conc_lead", "night_effect", "pca_statarb"]
 
 import yaml
 with open("config/universe.yaml", "r") as f:

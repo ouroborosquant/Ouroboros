@@ -30,7 +30,7 @@ logger = logging.getLogger("SignalIC")
 
 _CACHE     = Path("research/outputs/cache")
 _RETURNS   = _CACHE / "returns_wide.parquet"
-_SIGNALS   = _CACHE / "alpha_signals.parquet"
+_SIGNALS = Path("data/processed/signal_tensor.parquet")
 _REGIME    = _CACHE / "regime_posteriors.parquet"
 
 _HORIZONS:       List[int]  = [1, 5, 21, 63]

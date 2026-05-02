@@ -1,0 +1,452 @@
+(project_gp_env) alexr@ALEXRP:~/fortress_v5$  source /home/alexr/project_gp_env/bin/activate
+(project_gp_env) alexr@ALEXRP:~/fortress_v5$ PYTHONPATH=. python scripts/precompute_alpha_signals.py
+PYTHONPATH=. python scripts/train_gat_router.py
+PYTHONPATH=. python scripts/run_standalone_backtest.py
+21:02:45 [INFO] Ouroboros.Precompute — ======================================================================
+21:02:45 [INFO] Ouroboros.Precompute — FORTRESS v5 — precompute_alpha_signals.py  [v22.0 — Blueprint Suite]
+21:02:45 [INFO] Ouroboros.Precompute — Universe     : ['SPY', 'QQQ', 'IWM', 'COWZ', 'XLK', 'XLF', 'XLV', 'XLP', 'XLI', 'XLE', 'XLY', 'XLB', 'XLC', 'XLU', 'TLT', 'LQD', 'HYG', 'GLD', 'SLV', 'GDX', 'USO', 'PDBC', 'VIXY', 'SHV', 'BIL', 'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA', 'BRK.B', 'UNH', 'JPM', 'V', 'PG', 'MA', 'HD', 'CVX', 'JNJ', 'ABBV', 'PEP', 'COST', 'MRK', 'KO', 'AVGO', 'WMT', 'MCD', 'TMO', 'CRM', 'BAC', 'PFE', 'CSCO', 'LIN', 'ACN', 'ABT', 'ORCL', 'AMD', 'DIS', 'WFC', 'TXN', 'PM', 'COP', 'NEE', 'INTC', 'VZ', 'HON', 'CVS', 'QCOM', 'UNP', 'BA', 'IBM', 'LOW', 'SPGI', 'GS', 'CAT', 'ELV', 'BLK', 'MDT', 'SYK', 'INTU', 'AXP', 'AMGN', 'ISRG', 'NOW', 'T', 'GE', 'BKNG', 'PLD', 'ADI', 'MDLZ', 'CB', 'GILD', 'DE', 'CI', 'BMY', 'MMC', 'TJX', 'SYY']
+21:02:45 [INFO] Ouroboros.Precompute — Signal stack : ['low_vol', 'ramom_ts', 'odpv_vwap', 'clv_flow', 'dtfe_trend']
+21:02:45 [INFO] Ouroboros.Precompute — ETF blend: {'low_vol': 0.35, 'ramom_ts': 0.25, 'odpv_vwap': 0.2, 'clv_flow': 0.1, 'dtfe_trend': 0.1} | Equity blend: {'low_vol': 0.15, 'ramom_ts': 0.3, 'odpv_vwap': 0.25, 'clv_flow': 0.2, 'dtfe_trend': 0.1}
+21:02:45 [INFO] Ouroboros.Precompute — ======================================================================
+21:02:45 [INFO] Ouroboros.Precompute — Stage 1: Downloading OHLCV for 100 tickers from 2018-01-01...
+21:02:49 [ERROR] yfinance — $MMC: possibly delisted; no timezone found
+21:02:49 [ERROR] yfinance — 
+1 Failed download:
+21:02:49 [ERROR] yfinance — ['MMC']: possibly delisted; no timezone found
+21:02:49 [INFO] Ouroboros.Precompute —   ✓ OHLCV downloaded: 100 tickers × 2094 trading days
+21:02:50 [INFO] VolRegime — FRED unavailable — using ETF-implied credit/rate proxies.
+21:02:50 [INFO] VolRegime — Vol regime history loaded: 2094 vol days (FRED: ETF proxy mode)
+21:02:51 [INFO] VolRegime —   Equity regime [crisis]: 269 days (12.8%)
+21:02:51 [INFO] VolRegime —   Equity regime [stress]: 415 days (19.8%)
+21:02:51 [INFO] VolRegime —   Equity regime [neutral]: 1338 days (63.9%)
+21:02:51 [INFO] VolRegime —   Equity regime [complacent]: 72 days (3.4%)
+21:02:51 [INFO] Ouroboros.Precompute —   ✓ Regime posteriors → data/processed/regime_posteriors.parquet (2094, 5)
+21:02:51 [INFO] Ouroboros.Precompute — Stage 2: Low-vol anomaly (class-aware ranking)...
+21:02:51 [INFO] Ouroboros.Precompute —   ✓ low_vol (negated): mean|α|=0.4080
+21:02:51 [INFO] Ouroboros.Precompute — Stage 3: RAMOM-TS (Yang-Zhang normalised momentum)...
+21:02:51 [INFO] Ouroboros.RAMOMTS — RAMOM-TS | shape=(2094, 100) | mean|α|=0.2386 | non-zero=95.8%
+21:02:51 [INFO] Ouroboros.Precompute —   ✓ ramom_ts: mean|α|=0.2386
+21:02:51 [INFO] Ouroboros.Precompute — Stage 4: ODPV-VWAP (institutional VWAP footprint)...
+21:02:51 [INFO] Ouroboros.ODPV — ODPV-VWAP | shape=(2094, 100) | mean|α|=0.2527 | non-zero=96.9%
+21:02:51 [INFO] Ouroboros.Precompute —   ✓ odpv_vwap: mean|α|=0.2527
+21:02:51 [INFO] Ouroboros.Precompute — Stage 5: CLV-Flow (intraday close-location accumulation)...
+21:02:51 [INFO] Ouroboros.CLVFlow — CLV-Flow  | shape=(2094, 100) | mean|α|=0.2543 | non-zero=96.9%
+21:02:51 [INFO] Ouroboros.Precompute —   ✓ clv_flow: mean|α|=0.2543
+21:02:51 [INFO] Ouroboros.Precompute — Stage 6: DTFE-Trend (fractal efficiency noise filter)...
+21:02:51 [INFO] Ouroboros.DTFE — DTFE-Trend| shape=(2094, 100) | mean|α|=0.2693 | non-zero=96.0%
+21:02:51 [INFO] Ouroboros.Precompute —   ✓ dtfe_trend: mean|α|=0.2693
+21:02:51 [INFO] Ouroboros.Precompute — Stage 7: Static-weight blend (GATv2 bypassed — retrain required)...
+21:02:51 [INFO] Ouroboros.Precompute —   ✓ Blend complete | mean|α|=0.2253 | gate_mean=0.790
+21:02:51 [INFO] Ouroboros.Precompute — Signal tensor → data/processed/signal_tensor.parquet  (2094, 500)
+21:02:51 [INFO] Ouroboros.Precompute — Alpha parquet → data/processed/alpha_signals.parquet     (2094, 100)
+21:02:51 [INFO] Ouroboros.Precompute — 
+── Per-signal diagnostics ──
+21:02:51 [INFO] Ouroboros.Precompute —   low_vol      | mean|α|=0.4080 | max|α|=0.7616 | active=99.0%
+21:02:51 [INFO] Ouroboros.Precompute —   ramom_ts     | mean|α|=0.2263 | max|α|=0.9851 | active=95.8%
+21:02:51 [INFO] Ouroboros.Precompute —   odpv_vwap    | mean|α|=0.2424 | max|α|=0.9970 | active=96.9%
+21:02:51 [INFO] Ouroboros.Precompute —   clv_flow     | mean|α|=0.2439 | max|α|=0.9606 | active=96.9%
+21:02:51 [INFO] Ouroboros.Precompute —   dtfe_trend   | mean|α|=0.2559 | max|α|=0.9994 | active=96.0%
+21:02:51 [INFO] Ouroboros.Precompute — 
+✅ precompute v22.0 complete.
+21:02:51 [INFO] Ouroboros.Precompute — Next: validate_signal_ic.py → confirm IC > 0.035 per signal → rm models/weights/gat_router.pt → train_gat_router.py
+21:02:57 [INFO] Ouroboros.TrainGAT — ======================================================================
+21:02:57 [INFO] Ouroboros.TrainGAT — FORTRESS v5 — train_gat_router.py  [v3.0 — Blueprint Suite]
+21:02:57 [INFO] Ouroboros.TrainGAT — Signals: ['low_vol', 'ramom_ts', 'odpv_vwap', 'clv_flow', 'dtfe_trend']
+21:02:57 [INFO] Ouroboros.TrainGAT — Assets : 100 | NODE_FEAT_DIM=18 | GLOBAL_FEAT_DIM=16
+21:02:57 [INFO] Ouroboros.TrainGAT — ======================================================================
+21:02:57 [INFO] Ouroboros.TrainGAT — Overwriting existing checkpoint (signal_names match).
+21:02:57 [INFO] Ouroboros.TrainGAT — Aligned dataset: T=2093 days
+21:02:57 [INFO] Ouroboros.TrainGAT — Signal stack: (2093, 100, 5)
+21:02:57 [INFO] Ouroboros.TrainGAT — Computing per-signal rolling IC (may take 3-8 min)...
+21:03:39 [INFO] Ouroboros.TrainGAT —   low_vol        | mean|IC|=0.0880
+21:04:22 [INFO] Ouroboros.TrainGAT —   ramom_ts       | mean|IC|=0.0949
+21:05:04 [INFO] Ouroboros.TrainGAT —   odpv_vwap      | mean|IC|=0.0967
+21:05:46 [INFO] Ouroboros.TrainGAT —   clv_flow       | mean|IC|=0.0943
+21:06:27 [INFO] Ouroboros.TrainGAT —   dtfe_trend     | mean|IC|=0.0980
+21:06:27 [INFO] Ouroboros.TrainGAT — Computing return statistics...
+21:06:27 [INFO] Ouroboros.TrainGAT — Building economic correlation graph...
+21:06:27 [INFO] Ouroboros.TrainGAT — Device: cuda
+21:06:27 [INFO] Ouroboros.TrainGAT — Train: 1317 steps | Val: 377 steps | Warmup: 336 bars
+21:06:46 [INFO] Ouroboros.TrainGAT —   Epoch   1/200 | train_loss=-0.0217 | val_IC=+0.0541 | best_IC=+0.0541 | patience=0/30 | lr=1.00e-03
+21:09:05 [INFO] Ouroboros.TrainGAT —   Epoch  10/200 | train_loss=-0.0520 | val_IC=+0.0353 | best_IC=+0.0565 | patience=6/30 | lr=9.94e-04
+ 21:11:37 [INFO] Ouroboros.TrainGAT —   Epoch  20/200 | train_loss=-0.0625 | val_IC=+0.0531 | best_IC=+0.0565 | patience=16/30 | lr=9.76e-04
+21:17:17 [INFO] Ouroboros.TrainGAT —   Epoch  30/200 | train_loss=-0.0691 | val_IC=+0.0475 | best_IC=+0.0565 | patience=26/30 | lr=9.46e-04
+21:21:47 [INFO] Ouroboros.TrainGAT — Early stopping at epoch 34 (patience=30).
+21:21:47 [INFO] Ouroboros.TrainGAT — 
+✅ GATv2 weights saved → models/weights/gat_router.pt | best val IC = +0.0565
+2026-05-02 21:21:52,810 - INFO - ══════ Fortress v5 — Standalone Backtest v11.2 (CASH CONSTRAINED + DYNAMIC UNIV) ══════
+2026-05-02 21:21:52,912 - INFO - Loaded | prices:2094d  returns:2094d  regime:2094d  alpha:2094d  gex:2094d
+2026-05-02 21:27:44,815 - INFO -   CAGR                           +11.35%
+2026-05-02 21:27:44,815 - INFO -   Ann. Volatility                14.99%
+2026-05-02 21:27:44,815 - INFO -   Sharpe Ratio                   0.431
+2026-05-02 21:27:44,815 - INFO -   Sortino Ratio                  0.423
+2026-05-02 21:27:44,815 - INFO -   Calmar Ratio                   0.719
+2026-05-02 21:27:44,815 - INFO -   Max Drawdown                   -15.78%
+2026-05-02 21:27:44,815 - INFO -   Max DD Duration                478 days
+2026-05-02 21:27:44,815 - INFO -   VaR-95 (daily)                 -1.53%
+2026-05-02 21:27:44,815 - INFO -   CVaR-95 (daily)                -2.22%
+2026-05-02 21:27:44,815 - INFO -   Hit Rate                       51.83%
+2026-05-02 21:27:44,815 - INFO -   Avg Daily Turnover             24.20%
+2026-05-02 21:27:44,815 - INFO -   Cost Drag (ann. bps)           155.7
+2026-05-02 21:27:44,815 - INFO -   PSR (SR>0)                     1.0000
+2026-05-02 21:27:44,815 - INFO -   Skewness                       -0.346
+2026-05-02 21:27:44,816 - INFO -   Excess Kurtosis                1.761
+2026-05-02 21:27:44,816 - INFO -   Active Trading %               100.0%
+2026-05-02 21:27:44,816 - INFO -   Halted BIL %                   0.0%
+2026-05-02 21:27:44,816 - INFO -   Final NAV                      $171,028.96
+2026-05-02 21:27:44,816 - INFO -   Trading Days                   1258
+2026-05-02 21:27:44,837 - INFO - ✅ Tearsheet → research/outputs/backtest_tearsheet.csv (1258 rows)
+2026-05-02 21:27:44,837 - INFO - Running walk-forward validation...
+2026-05-02 21:28:56,986 - INFO -   CAGR                           +7.01%
+2026-05-02 21:28:56,986 - INFO -   Ann. Volatility                10.43%
+2026-05-02 21:28:56,987 - INFO -   Sharpe Ratio                   0.342
+2026-05-02 21:28:56,987 - INFO -   Sortino Ratio                  0.320
+2026-05-02 21:28:56,987 - INFO -   Calmar Ratio                   0.865
+2026-05-02 21:28:56,987 - INFO -   Max Drawdown                   -8.10%
+2026-05-02 21:28:56,987 - INFO -   Max DD Duration                83 days
+2026-05-02 21:28:56,987 - INFO -   VaR-95 (daily)                 -1.05%
+2026-05-02 21:28:56,987 - INFO -   CVaR-95 (daily)                -1.54%
+2026-05-02 21:28:56,987 - INFO -   Hit Rate                       55.34%
+2026-05-02 21:28:56,987 - INFO -   Avg Daily Turnover             17.92%
+2026-05-02 21:28:56,987 - INFO -   Cost Drag (ann. bps)           107.0
+2026-05-02 21:28:56,987 - INFO -   PSR (SR>0)                     1.0000
+2026-05-02 21:28:56,987 - INFO -   Skewness                       -0.337
+2026-05-02 21:28:56,987 - INFO -   Excess Kurtosis                1.626
+2026-05-02 21:28:56,987 - INFO -   Active Trading %               100.0%
+2026-05-02 21:28:56,987 - INFO -   Halted BIL %                   0.0%
+2026-05-02 21:28:56,987 - INFO -   Final NAV                      $107,034.90
+2026-05-02 21:28:56,987 - INFO -   Trading Days                   253
+2026-05-02 21:29:36,913 - INFO -   CAGR                           +29.88%
+2026-05-02 21:29:36,913 - INFO -   Ann. Volatility                16.69%
+2026-05-02 21:29:36,913 - INFO -   Sharpe Ratio                   0.645
+2026-05-02 21:29:36,913 - INFO -   Sortino Ratio                  0.545
+2026-05-02 21:29:36,913 - INFO -   Calmar Ratio                   2.538
+2026-05-02 21:29:36,913 - INFO -   Max Drawdown                   -11.77%
+2026-05-02 21:29:36,913 - INFO -   Max DD Duration                77 days
+2026-05-02 21:29:36,913 - INFO -   VaR-95 (daily)                 -1.48%
+2026-05-02 21:29:36,914 - INFO -   CVaR-95 (daily)                -2.72%
+2026-05-02 21:29:36,914 - INFO -   Hit Rate                       59.52%
+2026-05-02 21:29:36,914 - INFO -   Avg Daily Turnover             19.28%
+2026-05-02 21:29:36,914 - INFO -   Cost Drag (ann. bps)           138.5
+2026-05-02 21:29:36,914 - INFO -   PSR (SR>0)                     1.0000
+2026-05-02 21:29:36,914 - INFO -   Skewness                       -0.986
+2026-05-02 21:29:36,914 - INFO -   Excess Kurtosis                3.113
+2026-05-02 21:29:36,914 - INFO -   Active Trading %               100.0%
+2026-05-02 21:29:36,914 - INFO -   Halted BIL %                   0.0%
+2026-05-02 21:29:36,914 - INFO -   Final NAV                      $113,963.40
+2026-05-02 21:29:36,914 - INFO -   Trading Days                   126
+2026-05-02 21:29:36,914 - INFO -   F1: IS SR=0.342 | OOS SR=0.645  CAGR=29.88%  MaxDD=-11.77%
+2026-05-02 21:31:19,882 - INFO -   CAGR                           +9.39%
+2026-05-02 21:31:19,882 - INFO -   Ann. Volatility                12.84%
+2026-05-02 21:31:19,882 - INFO -   Sharpe Ratio                   0.439
+2026-05-02 21:31:19,882 - INFO -   Sortino Ratio                  0.392
+2026-05-02 21:31:19,882 - INFO -   Calmar Ratio                   0.797
+2026-05-02 21:31:19,882 - INFO -   Max Drawdown                   -11.77%
+2026-05-02 21:31:19,882 - INFO -   Max DD Duration                113 days
+2026-05-02 21:31:19,882 - INFO -   VaR-95 (daily)                 -1.25%
+2026-05-02 21:31:19,882 - INFO -   CVaR-95 (daily)                -2.03%
+2026-05-02 21:31:19,882 - INFO -   Hit Rate                       56.73%
+2026-05-02 21:31:19,882 - INFO -   Avg Daily Turnover             18.72%
+2026-05-02 21:31:19,883 - INFO -   Cost Drag (ann. bps)           119.5
+2026-05-02 21:31:19,883 - INFO -   PSR (SR>0)                     1.0000
+2026-05-02 21:31:19,883 - INFO -   Skewness                       -0.815
+2026-05-02 21:31:19,883 - INFO -   Excess Kurtosis                4.084
+2026-05-02 21:31:19,883 - INFO -   Active Trading %               100.0%
+2026-05-02 21:31:19,883 - INFO -   Halted BIL %                   0.0%
+2026-05-02 21:31:19,883 - INFO -   Final NAV                      $114,444.17
+2026-05-02 21:31:19,883 - INFO -   Trading Days                   379
+2026-05-02 21:31:58,737 - INFO -   CAGR                           +57.29%
+2026-05-02 21:31:58,737 - INFO -   Ann. Volatility                19.45%
+2026-05-02 21:31:58,737 - INFO -   Sharpe Ratio                   1.581
+2026-05-02 21:31:58,737 - INFO -   Sortino Ratio                  1.532
+2026-05-02 21:31:58,737 - INFO -   Calmar Ratio                   7.417
+2026-05-02 21:31:58,737 - INFO -   Max Drawdown                   -7.72%
+2026-05-02 21:31:58,737 - INFO -   Max DD Duration                38 days
+2026-05-02 21:31:58,737 - INFO -   VaR-95 (daily)                 -1.87%
+2026-05-02 21:31:58,737 - INFO -   CVaR-95 (daily)                -2.70%
+2026-05-02 21:31:58,737 - INFO -   Hit Rate                       57.14%
+2026-05-02 21:31:58,737 - INFO -   Avg Daily Turnover             20.01%
+2026-05-02 21:31:58,737 - INFO -   Cost Drag (ann. bps)           129.4
+2026-05-02 21:31:58,737 - INFO -   PSR (SR>0)                     1.0000
+2026-05-02 21:31:58,737 - INFO -   Skewness                       -0.340
+2026-05-02 21:31:58,737 - INFO -   Excess Kurtosis                0.859
+2026-05-02 21:31:58,737 - INFO -   Active Trading %               100.0%
+2026-05-02 21:31:58,737 - INFO -   Halted BIL %                   0.0%
+2026-05-02 21:31:58,738 - INFO -   Final NAV                      $125,414.99
+2026-05-02 21:31:58,738 - INFO -   Trading Days                   126
+2026-05-02 21:31:58,738 - INFO -   F2: IS SR=0.439 | OOS SR=1.581  CAGR=57.29%  MaxDD=-7.72%
+2026-05-02 21:34:09,254 - INFO -   CAGR                           +16.61%
+2026-05-02 21:34:09,254 - INFO -   Ann. Volatility                14.80%
+2026-05-02 21:34:09,255 - INFO -   Sharpe Ratio                   0.817
+2026-05-02 21:34:09,255 - INFO -   Sortino Ratio                  0.755
+2026-05-02 21:34:09,255 - INFO -   Calmar Ratio                   1.411
+2026-05-02 21:34:09,255 - INFO -   Max Drawdown                   -11.77%
+2026-05-02 21:34:09,255 - INFO -   Max DD Duration                113 days
+2026-05-02 21:34:09,255 - INFO -   VaR-95 (daily)                 -1.40%
+2026-05-02 21:34:09,255 - INFO -   CVaR-95 (daily)                -2.25%
+2026-05-02 21:34:09,255 - INFO -   Hit Rate                       57.03%
+2026-05-02 21:34:09,255 - INFO -   Avg Daily Turnover             18.99%
+2026-05-02 21:34:09,255 - INFO -   Cost Drag (ann. bps)           121.9
+2026-05-02 21:34:09,255 - INFO -   PSR (SR>0)                     1.0000
+2026-05-02 21:34:09,255 - INFO -   Skewness                       -0.527
+2026-05-02 21:34:09,255 - INFO -   Excess Kurtosis                2.876
+2026-05-02 21:34:09,255 - INFO -   Active Trading %               100.0%
+2026-05-02 21:34:09,255 - INFO -   Halted BIL %                   0.0%
+2026-05-02 21:34:09,255 - INFO -   Final NAV                      $136,052.04
+2026-05-02 21:34:09,255 - INFO -   Trading Days                   505
+2026-05-02 21:34:47,477 - INFO -   CAGR                           +15.79%
+2026-05-02 21:34:47,477 - INFO -   Ann. Volatility                14.01%
+2026-05-02 21:34:47,477 - INFO -   Sharpe Ratio                   0.334
+2026-05-02 21:34:47,477 - INFO -   Sortino Ratio                  0.325
+2026-05-02 21:34:47,478 - INFO -   Calmar Ratio                   2.240
+2026-05-02 21:34:47,478 - INFO -   Max Drawdown                   -7.05%
+2026-05-02 21:34:47,478 - INFO -   Max DD Duration                61 days
+2026-05-02 21:34:47,478 - INFO -   VaR-95 (daily)                 -1.43%
+2026-05-02 21:34:47,478 - INFO -   CVaR-95 (daily)                -1.93%
+2026-05-02 21:34:47,478 - INFO -   Hit Rate                       52.38%
+2026-05-02 21:34:47,478 - INFO -   Avg Daily Turnover             18.43%
+2026-05-02 21:34:47,478 - INFO -   Cost Drag (ann. bps)           113.1
+2026-05-02 21:34:47,478 - INFO -   PSR (SR>0)                     0.9998
+2026-05-02 21:34:47,478 - INFO -   Skewness                       -0.250
+2026-05-02 21:34:47,478 - INFO -   Excess Kurtosis                0.527
+2026-05-02 21:34:47,478 - INFO -   Active Trading %               100.0%
+2026-05-02 21:34:47,478 - INFO -   Halted BIL %                   0.0%
+2026-05-02 21:34:47,478 - INFO -   Final NAV                      $107,605.64
+2026-05-02 21:34:47,478 - INFO -   Trading Days                   126
+2026-05-02 21:34:47,479 - INFO -   F3: IS SR=0.817 | OOS SR=0.334  CAGR=15.79%  MaxDD=-7.05%
+2026-05-02 21:37:31,585 - INFO -   CAGR                           +15.22%
+2026-05-02 21:37:31,586 - INFO -   Ann. Volatility                14.65%
+2026-05-02 21:37:31,587 - INFO -   Sharpe Ratio                   0.733
+2026-05-02 21:37:31,587 - INFO -   Sortino Ratio                  0.686
+2026-05-02 21:37:31,587 - INFO -   Calmar Ratio                   1.293
+2026-05-02 21:37:31,587 - INFO -   Max Drawdown                   -11.77%
+2026-05-02 21:37:31,587 - INFO -   Max DD Duration                113 days
+2026-05-02 21:37:31,587 - INFO -   VaR-95 (daily)                 -1.43%
+2026-05-02 21:37:31,587 - INFO -   CVaR-95 (daily)                -2.21%
+2026-05-02 21:37:31,587 - INFO -   Hit Rate                       56.10%
+2026-05-02 21:37:31,587 - INFO -   Avg Daily Turnover             18.79%
+2026-05-02 21:37:31,587 - INFO -   Cost Drag (ann. bps)           120.3
+2026-05-02 21:37:31,587 - INFO -   PSR (SR>0)                     1.0000
+2026-05-02 21:37:31,587 - INFO -   Skewness                       -0.477
+2026-05-02 21:37:31,587 - INFO -   Excess Kurtosis                2.483
+2026-05-02 21:37:31,587 - INFO -   Active Trading %               100.0%
+2026-05-02 21:37:31,588 - INFO -   Halted BIL %                   0.0%
+2026-05-02 21:37:31,588 - INFO -   Final NAV                      $142,569.86
+2026-05-02 21:37:31,588 - INFO -   Trading Days                   631
+2026-05-02 21:38:10,500 - INFO -   CAGR                           +1.15%
+2026-05-02 21:38:10,501 - INFO -   Ann. Volatility                14.95%
+2026-05-02 21:38:10,501 - INFO -   Sharpe Ratio                   0.071
+2026-05-02 21:38:10,501 - INFO -   Sortino Ratio                  0.070
+2026-05-02 21:38:10,501 - INFO -   Calmar Ratio                   0.136
+2026-05-02 21:38:10,501 - INFO -   Max Drawdown                   -8.44%
+2026-05-02 21:38:10,501 - INFO -   Max DD Duration                61 days
+2026-05-02 21:38:10,501 - INFO -   VaR-95 (daily)                 -1.48%
+2026-05-02 21:38:10,501 - INFO -   CVaR-95 (daily)                -2.24%
+2026-05-02 21:38:10,501 - INFO -   Hit Rate                       47.62%
+2026-05-02 21:38:10,501 - INFO -   Avg Daily Turnover             21.93%
+2026-05-02 21:38:10,501 - INFO -   Cost Drag (ann. bps)           128.2
+2026-05-02 21:38:10,501 - INFO -   PSR (SR>0)                     0.7804
+2026-05-02 21:38:10,502 - INFO -   Skewness                       -0.600
+2026-05-02 21:38:10,502 - INFO -   Excess Kurtosis                1.815
+2026-05-02 21:38:10,502 - INFO -   Active Trading %               100.0%
+2026-05-02 21:38:10,502 - INFO -   Halted BIL %                   0.0%
+2026-05-02 21:38:10,502 - INFO -   Final NAV                      $100,574.05
+2026-05-02 21:38:10,502 - INFO -   Trading Days                   126
+2026-05-02 21:38:10,506 - INFO -   F4: IS SR=0.733 | OOS SR=0.071  CAGR=1.15%  MaxDD=-8.44%
+2026-05-02 21:41:17,142 - INFO -   CAGR                           +13.44%
+2026-05-02 21:41:17,147 - INFO -   Ann. Volatility                14.70%
+2026-05-02 21:41:17,147 - INFO -   Sharpe Ratio                   0.620
+2026-05-02 21:41:17,147 - INFO -   Sortino Ratio                  0.587
+2026-05-02 21:41:17,148 - INFO -   Calmar Ratio                   1.142
+2026-05-02 21:41:17,148 - INFO -   Max Drawdown                   -11.77%
+2026-05-02 21:41:17,148 - INFO -   Max DD Duration                113 days
+2026-05-02 21:41:17,148 - INFO -   VaR-95 (daily)                 -1.44%
+2026-05-02 21:41:17,148 - INFO -   CVaR-95 (daily)                -2.23%
+2026-05-02 21:41:17,148 - INFO -   Hit Rate                       54.56%
+2026-05-02 21:41:17,148 - INFO -   Avg Daily Turnover             19.35%
+2026-05-02 21:41:17,148 - INFO -   Cost Drag (ann. bps)           122.4
+2026-05-02 21:41:17,148 - INFO -   PSR (SR>0)                     1.0000
+2026-05-02 21:41:17,148 - INFO -   Skewness                       -0.499
+2026-05-02 21:41:17,149 - INFO -   Excess Kurtosis                2.367
+2026-05-02 21:41:17,149 - INFO -   Active Trading %               100.0%
+2026-05-02 21:41:17,149 - INFO -   Halted BIL %                   0.0%
+2026-05-02 21:41:17,149 - INFO -   Final NAV                      $146,062.27
+2026-05-02 21:41:17,149 - INFO -   Trading Days                   757
+2026-05-02 21:41:54,521 - INFO -   CAGR                           +9.60%
+2026-05-02 21:41:54,522 - INFO -   Ann. Volatility                20.12%
+2026-05-02 21:41:54,522 - INFO -   Sharpe Ratio                   0.116
+2026-05-02 21:41:54,522 - INFO -   Sortino Ratio                  0.113
+2026-05-02 21:41:54,522 - INFO -   Calmar Ratio                   0.885
+2026-05-02 21:41:54,523 - INFO -   Max Drawdown                   -10.85%
+2026-05-02 21:41:54,527 - INFO -   Max DD Duration                67 days
+2026-05-02 21:41:54,527 - INFO -   VaR-95 (daily)                 -2.06%
+2026-05-02 21:41:54,527 - INFO -   CVaR-95 (daily)                -2.62%
+2026-05-02 21:41:54,527 - INFO -   Hit Rate                       52.00%
+2026-05-02 21:41:54,527 - INFO -   Avg Daily Turnover             17.34%
+2026-05-02 21:41:54,527 - INFO -   Cost Drag (ann. bps)           109.3
+2026-05-02 21:41:54,528 - INFO -   PSR (SR>0)                     0.8994
+2026-05-02 21:41:54,528 - INFO -   Skewness                       -0.168
+2026-05-02 21:41:54,528 - INFO -   Excess Kurtosis                0.463
+2026-05-02 21:41:54,528 - INFO -   Active Trading %               100.0%
+2026-05-02 21:41:54,528 - INFO -   Halted BIL %                   0.0%
+2026-05-02 21:41:54,528 - INFO -   Final NAV                      $104,653.80
+2026-05-02 21:41:54,528 - INFO -   Trading Days                   125
+2026-05-02 21:41:54,530 - INFO -   F5: IS SR=0.620 | OOS SR=0.116  CAGR=9.60%  MaxDD=-10.85%
+2026-05-02 21:46:52,026 - INFO -   CAGR                           +11.86%
+2026-05-02 21:46:52,026 - INFO -   Ann. Volatility                15.55%
+2026-05-02 21:46:52,026 - INFO -   Sharpe Ratio                   0.501
+2026-05-02 21:46:52,026 - INFO -   Sortino Ratio                  0.475
+2026-05-02 21:46:52,027 - INFO -   Calmar Ratio                   1.008
+2026-05-02 21:46:52,027 - INFO -   Max Drawdown                   -11.77%
+2026-05-02 21:46:52,027 - INFO -   Max DD Duration                113 days
+2026-05-02 21:46:52,027 - INFO -   VaR-95 (daily)                 -1.60%
+2026-05-02 21:46:52,027 - INFO -   CVaR-95 (daily)                -2.34%
+2026-05-02 21:46:52,027 - INFO -   Hit Rate                       54.20%
+2026-05-02 21:46:52,027 - INFO -   Avg Daily Turnover             19.38%
+2026-05-02 21:46:52,027 - INFO -   Cost Drag (ann. bps)           123.0
+2026-05-02 21:46:52,027 - INFO -   PSR (SR>0)                     1.0000
+2026-05-02 21:46:52,027 - INFO -   Skewness                       -0.423
+2026-05-02 21:46:52,027 - INFO -   Excess Kurtosis                2.045
+2026-05-02 21:46:52,027 - INFO -   Active Trading %               100.0%
+2026-05-02 21:46:52,027 - INFO -   Halted BIL %                   0.0%
+2026-05-02 21:46:52,027 - INFO -   Final NAV                      $148,047.96
+2026-05-02 21:46:52,027 - INFO -   Trading Days                   882
+2026-05-02 21:47:59,545 - INFO -   CAGR                           -13.66%
+2026-05-02 21:47:59,546 - INFO -   Ann. Volatility                12.26%
+2026-05-02 21:47:59,546 - INFO -   Sharpe Ratio                   -0.095
+2026-05-02 21:47:59,546 - INFO -   Sortino Ratio                  -0.105
+2026-05-02 21:47:59,546 - INFO -   Calmar Ratio                   -1.419
+2026-05-02 21:47:59,546 - INFO -   Max Drawdown                   -9.63%
+2026-05-02 21:47:59,546 - INFO -   Max DD Duration                93 days
+2026-05-02 21:47:59,546 - INFO -   VaR-95 (daily)                 -1.17%
+2026-05-02 21:47:59,546 - INFO -   CVaR-95 (daily)                -1.55%
+2026-05-02 21:47:59,546 - INFO -   Hit Rate                       44.44%
+2026-05-02 21:47:59,546 - INFO -   Avg Daily Turnover             39.68%
+2026-05-02 21:47:59,546 - INFO -   Cost Drag (ann. bps)           247.3
+2026-05-02 21:47:59,547 - INFO -   PSR (SR>0)                     0.1453
+2026-05-02 21:47:59,547 - INFO -   Skewness                       0.136
+2026-05-02 21:47:59,547 - INFO -   Excess Kurtosis                0.634
+2026-05-02 21:47:59,547 - INFO -   Active Trading %               100.0%
+2026-05-02 21:47:59,547 - INFO -   Halted BIL %                   0.0%
+2026-05-02 21:47:59,547 - INFO -   Final NAV                      $92,919.18
+2026-05-02 21:47:59,547 - INFO -   Trading Days                   126
+2026-05-02 21:47:59,550 - INFO -   F6: IS SR=0.501 | OOS SR=-0.095  CAGR=-13.66%  MaxDD=-9.63%
+2026-05-02 21:55:41,208 - INFO -   CAGR                           +10.96%
+2026-05-02 21:55:41,208 - INFO -   Ann. Volatility                15.17%
+2026-05-02 21:55:41,208 - INFO -   Sharpe Ratio                   0.453
+2026-05-02 21:55:41,208 - INFO -   Sortino Ratio                  0.437
+2026-05-02 21:55:41,208 - INFO -   Calmar Ratio                   0.694
+2026-05-02 21:55:41,209 - INFO -   Max Drawdown                   -15.79%
+2026-05-02 21:55:41,209 - INFO -   Max DD Duration                193 days
+2026-05-02 21:55:41,209 - INFO -   VaR-95 (daily)                 -1.54%
+2026-05-02 21:55:41,209 - INFO -   CVaR-95 (daily)                -2.28%
+2026-05-02 21:55:41,209 - INFO -   Hit Rate                       52.98%
+2026-05-02 21:55:41,209 - INFO -   Avg Daily Turnover             21.95%
+2026-05-02 21:55:41,209 - INFO -   Cost Drag (ann. bps)           140.5
+2026-05-02 21:55:41,209 - INFO -   PSR (SR>0)                     1.0000
+2026-05-02 21:55:41,209 - INFO -   Skewness                       -0.385
+2026-05-02 21:55:41,209 - INFO -   Excess Kurtosis                2.062
+2026-05-02 21:55:41,209 - INFO -   Active Trading %               100.0%
+2026-05-02 21:55:41,210 - INFO -   Halted BIL %                   0.0%
+2026-05-02 21:55:41,210 - INFO -   Final NAV                      $151,582.40
+2026-05-02 21:55:41,210 - INFO -   Trading Days                   1008
+2026-05-02 21:56:46,393 - INFO -   CAGR                           +3.31%
+2026-05-02 21:56:46,393 - INFO -   Ann. Volatility                12.79%
+2026-05-02 21:56:46,393 - INFO -   Sharpe Ratio                   0.377
+2026-05-02 21:56:46,393 - INFO -   Sortino Ratio                  0.349
+2026-05-02 21:56:46,393 - INFO -   Calmar Ratio                   0.448
+2026-05-02 21:56:46,393 - INFO -   Max Drawdown                   -7.38%
+2026-05-02 21:56:46,393 - INFO -   Max DD Duration                94 days
+2026-05-02 21:56:46,393 - INFO -   VaR-95 (daily)                 -1.49%
+2026-05-02 21:56:46,393 - INFO -   CVaR-95 (daily)                -1.83%
+2026-05-02 21:56:46,393 - INFO -   Hit Rate                       54.84%
+2026-05-02 21:56:46,393 - INFO -   Avg Daily Turnover             20.56%
+2026-05-02 21:56:46,393 - INFO -   Cost Drag (ann. bps)           123.9
+2026-05-02 21:56:46,393 - INFO -   PSR (SR>0)                     0.9999
+2026-05-02 21:56:46,394 - INFO -   Skewness                       -0.418
+2026-05-02 21:56:46,394 - INFO -   Excess Kurtosis                0.248
+2026-05-02 21:56:46,394 - INFO -   Active Trading %               100.0%
+2026-05-02 21:56:46,394 - INFO -   Halted BIL %                   0.0%
+2026-05-02 21:56:46,394 - INFO -   Final NAV                      $101,613.73
+2026-05-02 21:56:46,394 - INFO -   Trading Days                   124
+2026-05-02 21:56:46,395 - INFO -   F7: IS SR=0.453 | OOS SR=0.377  CAGR=3.31%  MaxDD=-7.38%
+2026-05-02 22:02:27,218 - INFO -   CAGR                           +10.65%
+2026-05-02 22:02:27,219 - INFO -   Ann. Volatility                14.77%
+2026-05-02 22:02:27,219 - INFO -   Sharpe Ratio                   0.440
+2026-05-02 22:02:27,219 - INFO -   Sortino Ratio                  0.423
+2026-05-02 22:02:27,219 - INFO -   Calmar Ratio                   0.675
+2026-05-02 22:02:27,219 - INFO -   Max Drawdown                   -15.79%
+2026-05-02 22:02:27,219 - INFO -   Max DD Duration                317 days
+2026-05-02 22:02:27,219 - INFO -   VaR-95 (daily)                 -1.51%
+2026-05-02 22:02:27,219 - INFO -   CVaR-95 (daily)                -2.21%
+2026-05-02 22:02:27,219 - INFO -   Hit Rate                       53.18%
+2026-05-02 22:02:27,219 - INFO -   Avg Daily Turnover             23.30%
+2026-05-02 22:02:27,219 - INFO -   Cost Drag (ann. bps)           148.6
+2026-05-02 22:02:27,219 - INFO -   PSR (SR>0)                     1.0000
+2026-05-02 22:02:27,219 - INFO -   Skewness                       -0.385
+2026-05-02 22:02:27,219 - INFO -   Excess Kurtosis                2.127
+2026-05-02 22:02:27,219 - INFO -   Active Trading %               100.0%
+2026-05-02 22:02:27,219 - INFO -   Halted BIL %                   0.0%
+2026-05-02 22:02:27,219 - INFO -   Final NAV                      $157,551.99
+2026-05-02 22:02:27,219 - INFO -   Trading Days                   1132
+2026-05-02 22:02:55,657 - INFO -   CAGR                           +2.29%
+2026-05-02 22:02:55,658 - INFO -   Ann. Volatility                12.39%
+2026-05-02 22:02:55,658 - INFO -   Sharpe Ratio                   -0.250
+2026-05-02 22:02:55,658 - INFO -   Sortino Ratio                  -0.281
+2026-05-02 22:02:55,658 - INFO -   Calmar Ratio                   0.229
+2026-05-02 22:02:55,658 - INFO -   Max Drawdown                   -10.01%
+2026-05-02 22:02:55,658 - INFO -   Max DD Duration                116 days
+2026-05-02 22:02:55,658 - INFO -   VaR-95 (daily)                 -1.16%
+2026-05-02 22:02:55,658 - INFO -   CVaR-95 (daily)                -1.54%
+2026-05-02 22:02:55,658 - INFO -   Hit Rate                       44.09%
+2026-05-02 22:02:55,658 - INFO -   Avg Daily Turnover             24.69%
+2026-05-02 22:02:55,658 - INFO -   Cost Drag (ann. bps)           149.1
+2026-05-02 22:02:55,658 - INFO -   PSR (SR>0)                     0.0034
+2026-05-02 22:02:55,658 - INFO -   Skewness                       0.286
+2026-05-02 22:02:55,659 - INFO -   Excess Kurtosis                0.517
+2026-05-02 22:02:55,659 - INFO -   Active Trading %               100.0%
+2026-05-02 22:02:55,659 - INFO -   Halted BIL %                   0.0%
+2026-05-02 22:02:55,659 - INFO -   Final NAV                      $101,147.98
+2026-05-02 22:02:55,659 - INFO -   Trading Days                   127
+2026-05-02 22:02:55,659 - INFO -   F8: IS SR=0.440 | OOS SR=-0.250  CAGR=2.29%  MaxDD=-10.01%
+2026-05-02 22:06:57,542 - INFO -   CAGR                           +9.70%
+2026-05-02 22:06:57,542 - INFO -   Ann. Volatility                14.55%
+2026-05-02 22:06:57,542 - INFO -   Sharpe Ratio                   0.383
+2026-05-02 22:06:57,542 - INFO -   Sortino Ratio                  0.374
+2026-05-02 22:06:57,542 - INFO -   Calmar Ratio                   0.614
+2026-05-02 22:06:57,542 - INFO -   Max Drawdown                   -15.79%
+2026-05-02 22:06:57,542 - INFO -   Max DD Duration                327 days
+2026-05-02 22:06:57,542 - INFO -   VaR-95 (daily)                 -1.48%
+2026-05-02 22:06:57,542 - INFO -   CVaR-95 (daily)                -2.16%
+2026-05-02 22:06:57,542 - INFO -   Hit Rate                       52.26%
+2026-05-02 22:06:57,542 - INFO -   Avg Daily Turnover             23.45%
+2026-05-02 22:06:57,542 - INFO -   Cost Drag (ann. bps)           149.4
+2026-05-02 22:06:57,542 - INFO -   PSR (SR>0)                     1.0000
+2026-05-02 22:06:57,542 - INFO -   Skewness                       -0.341
+2026-05-02 22:06:57,542 - INFO -   Excess Kurtosis                2.080
+2026-05-02 22:06:57,542 - INFO -   Active Trading %               100.0%
+2026-05-02 22:06:57,542 - INFO -   Halted BIL %                   0.0%
+2026-05-02 22:06:57,542 - INFO -   Final NAV                      $158,781.80
+2026-05-02 22:06:57,542 - INFO -   Trading Days                   1259
+2026-05-02 22:07:25,923 - INFO -   CAGR                           +23.17%
+2026-05-02 22:07:25,923 - INFO -   Ann. Volatility                11.85%
+2026-05-02 22:07:25,923 - INFO -   Sharpe Ratio                   1.393
+2026-05-02 22:07:25,923 - INFO -   Sortino Ratio                  1.466
+2026-05-02 22:07:25,923 - INFO -   Calmar Ratio                   3.895
+2026-05-02 22:07:25,923 - INFO -   Max Drawdown                   -5.95%
+2026-05-02 22:07:25,923 - INFO -   Max DD Duration                28 days
+2026-05-02 22:07:25,923 - INFO -   VaR-95 (daily)                 -1.20%
+2026-05-02 22:07:25,923 - INFO -   CVaR-95 (daily)                -1.39%
+2026-05-02 22:07:25,923 - INFO -   Hit Rate                       53.60%
+2026-05-02 22:07:25,923 - INFO -   Avg Daily Turnover             16.42%
+2026-05-02 22:07:25,923 - INFO -   Cost Drag (ann. bps)           102.2
+2026-05-02 22:07:25,923 - INFO -   PSR (SR>0)                     1.0000
+2026-05-02 22:07:25,924 - INFO -   Skewness                       0.024
+2026-05-02 22:07:25,924 - INFO -   Excess Kurtosis                -0.085
+2026-05-02 22:07:25,924 - INFO -   Active Trading %               100.0%
+2026-05-02 22:07:25,924 - INFO -   Halted BIL %                   0.0%
+2026-05-02 22:07:25,924 - INFO -   Final NAV                      $110,889.73
+2026-05-02 22:07:25,924 - INFO -   Trading Days                   125
+2026-05-02 22:07:25,924 - INFO -   F9: IS SR=0.383 | OOS SR=1.393  CAGR=23.17%  MaxDD=-5.95%
+2026-05-02 22:07:25,927 - INFO - WF summary: avg IS=0.525 | avg OOS=0.463 | ⚠️  Modest OOS signal
+2026-05-02 22:07:25,928 - INFO - ✅ Done. Run scripts/visualize_tearsheet.py next.

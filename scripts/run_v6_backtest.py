@@ -57,8 +57,9 @@ _OUT_DIR.mkdir(parents=True, exist_ok=True)
 _PRICES_P  = _CACHE_DIR / "prices_wide.parquet"
 _RETURNS_P = _CACHE_DIR / "returns_wide.parquet"
 _REGIME_P  = _CACHE_DIR / "regime_posteriors.parquet"
-_ALPHA_P   = _CACHE_DIR / "alpha_signals_blended.parquet"
-
+_ALPHA_RAW_P = _CACHE_DIR / "alpha_signals.parquet"
+_FOMC_P      = _CACHE_DIR / "fomc_stance.parquet"
+N_SIGNALS    = 5
 _V5_WF_CSV  = _OUT_DIR / "v5_wf_results.csv"
 _V5_TS_CSV  = _OUT_DIR / "v5_tearsheet.csv"
 _COMPARE_CSV = _OUT_DIR / "v5_vs_baseline.csv"
@@ -106,7 +107,8 @@ _FOLD_SCHEDULE: List[Tuple[str, str, str, str]] = [
 try:
     import torch
     from risk.wasserstein_hmm    import WassersteinHMM
-    from models.portfolio.cvar_optimizer import CVaRMVOOptimizer
+    from models.portfolio.hrp_allocator import HRPAllocator
+    from models.alpha.multi_horizon_ic_router import MultiHorizonICRouter
     from signals.frac_diff        import AdaptiveFracDiff, _fft_fractional_diff, _frac_diff_weights
     _V5_AVAILABLE = True
     logger.info("✓ fortress_v5 modules loaded (PyTorch + cvxpy)")
@@ -153,8 +155,9 @@ def _cost_drag_bps(turnover: np.ndarray, cost_per_unit: float = 15.0) -> float:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _build_hmm_features(
-    returns_df: pd.DataFrame,        # (T, N) daily returns
-    prices_df:  pd.DataFrame,        # (T, N) prices
+    returns_df: pd.DataFrame,
+    prices_df:  pd.DataFrame,
+    fomc_df:    pd.DataFrame,
     dates: pd.Index,
 ) -> np.ndarray:
     """
@@ -213,7 +216,11 @@ def _build_hmm_features(
         sigma  = s.rolling(252, min_periods=20).std().fillna(1.0).values.clip(min=1e-6)
         feat_norm[:, j] = (feat_raw[:, j] - mu) / sigma
 
-    return feat_norm.astype(np.float32)
+    p_hawk = fomc_df['p_hawkish'].reindex(dates).values
+    p_dove = fomc_df['p_dovish'].reindex(dates).values
+    p_neut = fomc_df['p_neutral'].reindex(dates).values
+    feat_final = np.column_stack([feat_norm, p_hawk, p_dove, p_neut])
+    return feat_final.astype(np.float32)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -374,7 +381,7 @@ class V5Backtester:
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
             # Instancia el modelo y empújalo a la GPU
-            self._hmm = WassersteinHMM(n_regimes=3, n_features=5).to(device)
+            self._hmm = WassersteinHMM(n_regimes=3, n_features=8).to(device)
             x_is = torch.tensor(hmm_feats_is, dtype=torch.float32)
             opt  = optim.Adam(self._hmm.parameters(), lr=5e-3)
             for step in range(120):                                   # ~2s on CPU
@@ -389,21 +396,26 @@ class V5Backtester:
         else:
             self._hmm = None
 
-        # ── 2. CVaR optimizer: fresh instance per fold ───────────────────
+        # ── 2. V6 Router & HRP Allocator: fresh instance per fold ────────
         if _V5_AVAILABLE:
             try:
-                import cvxpy as cp
-                self._opt = CVaRMVOOptimizer(
-                    n_assets    = N,
-                    alpha       = _CVAR_ALPHA,
-                    lambda_cvar = _LAMBDA_CVAR,
-                    gamma       = _GAMMA,
-                    weight_ub   = _MAX_WEIGHT,
+                self._router = MultiHorizonICRouter(
+                    node_feat_dim=N_SIGNALS, global_feat_dim=8, edge_feat_dim=3,
+                    n_signals=N_SIGNALS, freeze_backbone=True, ic_cash_trigger=-0.015
+                ).to(device)
+                self._router.eval()
+                self._allocator = HRPAllocator(
+                    n_assets=N, lookback=252, beta=0.25, weight_ub=_MAX_WEIGHT, dd_threshold=0.05
                 )
+                self._opt = None  # Force nullify legacy optimizer
             except Exception as exc:
-                logger.warning("CVaRMVOOptimizer init failed (%s) — using numpy MVO", exc)
+                logger.warning("V6 Router/Allocator init failed (%s) — check CUDA/PyG dependencies", exc)
+                self._router = None
+                self._allocator = None
                 self._opt = None
         else:
+            self._router = None
+            self._allocator = None
             self._opt = None
 
         # ── 3. Conformal calibration on IS ──────────────────────────────
@@ -423,8 +435,8 @@ class V5Backtester:
     def _allocate(
         self,
         date:         str,
-        alpha_t:      np.ndarray,          # (N,)
-        hmm_feat_t:   np.ndarray,          # (HMM_WINDOW, 5)
+        alpha_raw_t:  np.ndarray,          # (N, S)
+        hmm_feat_t:   np.ndarray,          # (HMM_WINDOW, 8)
         ret_scen:     np.ndarray,          # (SCEN_WINDOW, N) scenario returns
         cov_est:      np.ndarray,          # (N, N) covariance
         w_prev:       np.ndarray,          # (N,)
@@ -442,11 +454,9 @@ class V5Backtester:
                 x_t = torch.tensor(hmm_feat_t, dtype=torch.float32)
                 rs  = self._hmm.predict(x_t)
                 exposure = float(rs.exposure_multiplier)
-
-                # --- PARANOIA MODE (Versión Dorada) ---
+                # --- PARANOIA MODE ---
                 if exposure < 0.4:
-                    exposure = 0.0
-
+                    exposure = 0.0  # Si el HMM detecta estrés, nos vamos a liquidez total
             except Exception as exc:
                 logger.debug("HMM predict failed: %s", exc)
 
@@ -465,21 +475,25 @@ class V5Backtester:
         if ret_t is not None and alpha_prev is not None:
             self._conf.update_online(alpha_prev, ret_t)
 
-        # ── Step 3: CVaR-MVO allocation ──────────────────────────────────
-        if self._opt is not None:
-            try:
-                result = self._opt.solve(
-                    mu               = mu_masked,
-                    scenario_returns = ret_scen,
-                    w_prev           = w_prev,
-                    exposure_multiplier = exposure,
-                )
-                w = result.weights
-            except Exception as exc:
-                logger.debug("CVaR-MVO failed on %s: %s — fallback", date, exc)
-                w = _mvo_numpy(mu_masked, cov_est, w_prev)
-        else:
-            w = _mvo_numpy(mu_masked, cov_est, w_prev, lam_turn=_GAMMA)
+        # ── Step 3: Graph Attention Routing & HRP Allocation ─────────────
+        x_graph = torch.tensor(alpha_raw_t, dtype=torch.float32, device=self.device)
+        g_global = torch.tensor(hmm_feat_t[-1:], dtype=torch.float32, device=self.device)
+        edge_index = torch.empty((2, 0), dtype=torch.long, device=self.device)
+        edge_attr = torch.empty((0, 3), dtype=torch.float32, device=self.device)
+        
+        decision = self._router.route(
+            x=x_graph, g=g_global, edge_index=edge_index, edge_attr=edge_attr, 
+            signal_matrix=x_graph, device=self.device
+        )
+        
+        if decision.cash_forced or exposure == 0.0:
+            w = np.zeros(N, dtype=np.float32)
+            w[CASH_IDX] = 1.0
+            return w, exposure, True
+
+        # Apply HRP
+        hrp_res = self._allocator.allocate(returns_window=ret_scen, signal=decision.alpha, w_prev=w_prev)
+        w = hrp_res.weights
 
         # Hard cap: VIXY ≤ 5% (vol products get outsized weight in CVaR scenarios)
         w[VIXY_IDX] = min(w[VIXY_IDX], 0.05)
@@ -545,12 +559,12 @@ class V5Backtester:
             # ── Covariance for fallback MVO ──────────────────────────────
             cov_est = np.cov(ret_scen.T) if len(ret_scen) > N else np.eye(N) * 1e-4
 
-            # ── Alpha signal for today ───────────────────────────────────
-            alpha_t = alpha_oos.reindex(index=[date]).reindex(columns=TICKERS).fillna(0.0).values
-            if alpha_t.shape[0] == 0:
-                alpha_t = np.zeros(N)
+            # ── Raw Alpha matrix for today (N, S) ────────────────────────
+            alpha_flat = alpha_oos.reindex(index=[date]).fillna(0.0).values
+            if alpha_flat.shape[0] == 0 or alpha_flat.shape[1] != (N * N_SIGNALS):
+                alpha_raw_t = np.zeros((N, N_SIGNALS))
             else:
-                alpha_t = alpha_t[0].astype(float)
+                alpha_raw_t = alpha_flat[0].reshape(N, N_SIGNALS).astype(float)
 
             # ── Realized return (for online conformal update) ───────────
             ret_t_np = ret_all[t_idx] if t_idx < len(ret_all) else None
@@ -576,9 +590,9 @@ class V5Backtester:
             nav      = nav * (1.0 + daily_ret)
             peak_nav = max(peak_nav, nav)
 
-            # Drawdown halt: if DD > 4%, force BIL allocation
+            # Drawdown halt: if DD > 5%, force BIL allocation
             current_dd = (nav - peak_nav) / (peak_nav + 1e-10)
-            if current_dd <= -0.04:
+            if current_dd <= -0.05:
                 w[:] = 0.0
                 w[CASH_IDX] = 1.0
 
@@ -717,16 +731,6 @@ def _print_comparison(v5_results: List[FoldResult], baseline_df: Optional[pd.Dat
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    # --- CONGELAR SEMILLAS ALEATORIAS ---
-    import random
-    np.random.seed(42)
-    random.seed(42)
-    if _V5_AVAILABLE:
-        import torch
-        torch.manual_seed(42)
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed_all(42)
-    # ------------------------------------
     logger.info("══════ Fortress v5 Walk-Forward Backtest  ══════")
 
     # ── Load data ────────────────────────────────────────────────────────────

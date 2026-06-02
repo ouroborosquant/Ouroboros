@@ -374,87 +374,111 @@ def stage6_dtfe_trend(ohlcv: Dict[str, pd.DataFrame]) -> pd.DataFrame:
 # ─────────────────────────────────────────────────────────────────────────────
     logger.info("Stage 7: Static-weight blend (GATv2 bypassed — retrain required)...")
 # ─────────────────────────────────────────────────────────────────────────────
-
 def stage7_blend(
     signal_dfs:  Dict[str, pd.DataFrame],
     regime_df:   pd.DataFrame,
     dates:       pd.DatetimeIndex,
+    returns:     pd.DataFrame,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Blend 5 signals into the final alpha vector using dynamic GATv2 routing.
+    Blend 5 signals into the final alpha vector using an adaptive regime-aware architecture.
     """
-    # ── CONEXIÓN NEURONAL CORREGIDA (Carga de State Dict) ───────────────────
-    logger.info("Stage 7: Dynamic-weight blend via active GATv2 Router...")
+    # IMPORTACIÓN EXPLÍCITA Y LOCALIZADA
+    from models.alpha.gat_signal_router import N_SIGNALS
+    
+    use_router = os.getenv("USE_GAT_ROUTER", "0") == "1"
+    
+    T = len(dates)
+    N = N_ASSETS
+    
+    # Ahora N_SIGNALS está definida correctamente como local
+    stack = np.zeros((T, N, N_SIGNALS), dtype=np.float32)
+    # ... resto de la función ...
+    for s_idx, sig_name in enumerate(SIGNAL_NAMES):
+        if sig_name in signal_dfs:
+            stack[:, :, s_idx] = signal_dfs[sig_name].reindex(dates).ffill().fillna(0.0).reindex(columns=TICKERS).fillna(0.0).values
 
-    try:
-        from models.alpha.gat_signal_router import SignalRouterGAT, N_SIGNALS
-        import torch
+    if use_router:
+        logger.info("Stage 7: Dynamic-weight blend via active GATv2 Router...")
+        try:
+            from models.alpha.gat_signal_router import SignalRouterGAT, N_SIGNALS
+            import torch
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            
+            router = SignalRouterGAT(n_signals=N_SIGNALS).to(device)
+            checkpoint = torch.load("models/weights/gat_router.pt", map_location=device)
+            router.load_state_dict(checkpoint["model_state_dict"])
+            router.eval()
+            
+            # Sanitización de tensores
+            regime_t = torch.tensor(regime_df.reindex(dates).ffill().fillna(0.0).values, dtype=torch.float32).to(device)
+            rets_t   = torch.tensor(returns.reindex(dates).ffill().fillna(0.0).values, dtype=torch.float32).to(device)
+            stack_t  = torch.tensor(stack, dtype=torch.float32).to(device)
+            
+            # ── FIX: Convertir DatetimeIndex a tensor de timestamps (segundos) ──
+            dates_t = torch.tensor(
+                dates.astype(np.int64).values / 1e9, 
+                dtype=torch.float32
+            ).to(device)
+            
+            alpha_raw_tensor = router.infer_alpha(
+                regime_t,
+                rets_t,
+                dates_t,   # ← Ahora es un tensor compatible
+                TICKERS,
+                stack_t
+            )
+            alpha_raw = alpha_raw_tensor.cpu().numpy().astype(np.float32)
+        except Exception as exc:
+            logger.warning(f"  ⚠️ GATv2 Router failed ({exc}). Falling back to robust ensemble.")
+            use_router = False
+
+    if not use_router:
+        logger.info("Stage 7: Robust Cross-Sectional Ensemble Blend (Regime-Aware)...")
         
-        # Instanciamos la arquitectura limpia de la red
-        router = SignalRouterGAT(n_signals=N_SIGNALS)
+        # Normalización Cross-Sectional de las alphas individuales para eliminar sesgos de escala
+        signal_z = {}
+        for name, df in signal_dfs.items():
+            x = df.reindex(dates).ffill().fillna(0.0).reindex(columns=TICKERS).fillna(0.0)
+            x_mean = x.mean(axis=1)
+            x_std  = x.std(axis=1).replace(0.0, np.nan)
+            # Z-score cross-sectional + truncamiento rígido a 3 sigmas
+            signal_z[name] = x.sub(x_mean, axis=0).div(x_std, axis=0).fillna(0.0).clip(-3.0, 3.0)
+
+        # Matriz de pesos adaptativa según el nivel de urgencia macro del régimen
+        alpha_raw = np.zeros((T, N), dtype=np.float32)
         
-        # Cargamos el diccionario de pesos mapeando el state_dict de Fortress
-        checkpoint = torch.load("models/weights/gat_router.pt", map_location="cpu")
-        router.load_state_dict(checkpoint["model_state_dict"])
-        router.eval()   # Desactivamos BatchNorm/Dropout para inferencia
+        # Petición de urgencia para modular la exposición defensiva
+        urgency_arr = regime_df["ltc_urgency"].reindex(dates).ffill().fillna(0.3).values
         
-        # Invocamos la mezcla relacional dinámica
-        alpha_raw_df = router.infer_alpha(
-            signal_dfs=signal_dfs, 
-            regime_df=regime_df, 
-            dates=dates,
-            tickers=TICKERS
-        )
-        alpha_raw = alpha_raw_df.values.astype(np.float32)
-        
-    except (ImportError, Exception) as exc:
-        # Protocolo de contingencia (Bypass de seguridad) si el archivo .pt se corrompe
-        logger.warning(f"  ⚠️  GATv2 router inference failed ({exc}). Bypassing to legacy static weights.")
-        T = len(dates)
-        N = N_ASSETS
-        equity_set = frozenset(EQUITY_TICKERS)
-        w_etf_arr  = np.array([_WEIGHTS_ETF.get(n, 0.0)    for n in SIGNAL_NAMES], dtype=np.float32)
-        w_eq_arr   = np.array([_WEIGHTS_EQUITY.get(n, 0.0) for n in SIGNAL_NAMES], dtype=np.float32)
-        weight_mat = np.stack([w_eq_arr if t in equity_set else w_etf_arr for t in TICKERS])
-        
-        stack = np.zeros((T, N, N_SIGNALS), dtype=np.float32)
-        for s_idx, sig_name in enumerate(SIGNAL_NAMES):
-            if sig_name in signal_dfs:
-                stack[:, :, s_idx] = signal_dfs[sig_name].reindex(dates).ffill().fillna(0.0).reindex(columns=TICKERS).fillna(0.0).values
-        alpha_raw = (stack * weight_mat[None, :, :]).sum(axis=2)
+        for t_idx in range(T):
+            u = urgency_arr[t_idx]
+            # Si la urgencia es alta (Crisis/Stress), podamos Momento y sobre-ponderamos Low Vol de forma dinámica
+            w_low_vol  = 0.50 if u > 0.5 else 0.25
+            w_ramom    = 0.05 if u > 0.5 else 0.30
+            w_odpv     = 0.25 if u > 0.5 else 0.25
+            w_clv      = 0.10 if u > 0.5 else 0.10
+            w_dtfe     = 0.10
+            
+            for s_idx, name in enumerate(SIGNAL_NAMES):
+                w_sig = {"low_vol": w_low_vol, "ramom_ts": w_ramom, "odpv_vwap": w_odpv, "clv_flow": w_clv, "dtfe_trend": w_dtfe}[name]
+                alpha_raw[t_idx] += signal_z[name].iloc[t_idx].values * w_sig
 
     # ── Regime gate: scale alpha by vol-regime urgency proxy ─────────────────
     if "ltc_urgency" in regime_df.columns:
-        urgency = (
-            regime_df["ltc_urgency"]
-            .reindex(dates)
-            .ffill()
-            .fillna(0.3)
-            .clip(0.0, 1.0)
-            .values[:, None]     # (T, 1) for broadcast over N
-        )
+        urgency = regime_df["ltc_urgency"].reindex(dates).ffill().fillna(0.3).clip(0.0, 1.0).values[:, None]
         gate = 0.30 + 0.70 * (1.0 - urgency)
         alpha_gated = alpha_raw * gate
     else:
-        logger.warning("  Regime gate unavailable; bypassing.")
         alpha_gated = alpha_raw
 
     # ── Turnover Smoothing & tanh re-normalisation ───────────────────────────
     raw_alpha_df = pd.DataFrame(alpha_gated * 2.0, index=dates, columns=TICKERS)
     smoothed_alpha = raw_alpha_df.ewm(span=3, min_periods=1).mean()
-
     alpha_final = np.tanh(smoothed_alpha.values).astype(np.float32)
     alpha_df = pd.DataFrame(alpha_final, index=dates, columns=TICKERS)
 
-    gex_alpha_df = alpha_df.copy()
-
-    logger.info(
-        f"  ✓ Dynamic Blend complete | mean|α|={alpha_df.abs().mean().mean():.4f} | "
-        f"gate_mean={gate.mean():.3f}" if "ltc_urgency" in regime_df.columns
-        else f"  ✓ Dynamic Blend complete | mean|α|={alpha_df.abs().mean().mean():.4f}"
-    )
-    return alpha_df, gex_alpha_df
-
+    return alpha_df, alpha_df.copy()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Main orchestrator
@@ -507,6 +531,7 @@ async def main() -> None:
         signal_dfs = signal_dfs,
         regime_df  = regime_df,
         dates      = dates,
+        returns    = returns,   # <── ENLACE DE MATRIZ CAUSAL
     )
 
     # ── Persist per-signal tensor (wide: {signal}_{ticker} columns) ──────────

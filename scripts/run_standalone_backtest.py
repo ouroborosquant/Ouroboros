@@ -281,12 +281,17 @@ def _mvo_weights(
     if np.isnan(base_lam_turn): base_lam_turn = _LAMBDA_TURN
 
     if np.isnan(equity_urgency): equity_urgency = 0.0
-    if equity_urgency > 0.7:
-        lam_turn = 0.0
-    elif equity_urgency > 0.4:
-        lam_turn = base_lam_turn * 0.4
-    else:
-        lam_turn = base_lam_turn
+    
+    # ── BLINDAJE ANTICRISIS INSTITUCIONAL (F6 ANTIDOTE) ──────────────────────
+    # En momentos de pánico macro o alta urgencia, endurecemos la penalización por
+    # rotación en lugar de reducirla a cero. Esto congela las transacciones y 
+    # detiene el churning ruidoso de la cartera.
+    crisis_boost = 1.0 + 1.5 * float(np.clip(equity_urgency, 0.0, 1.0))
+    if rolling_ic < 0.0:
+        crisis_boost *= 1.5  # Penalización penalizadora extra si el factor pierde predictibilidad
+
+    # Forzamos un suelo defensivo estricto (0.03) para evitar tradeos gratis
+    lam_turn = max(base_lam_turn * crisis_boost, 0.03)
 
     eigenvalues, eigenvectors = np.linalg.eigh(Σ)
     eigenvalues = np.maximum(eigenvalues, 1e-8)
@@ -299,18 +304,20 @@ def _mvo_weights(
         tech_alpha = 0.0
         
     univ_alpha = np.mean(alpha)
+    # Techos dinámicos de asignación por sectores
     dynamic_tech_cap = _MAX_TECH_WEIGHT
     if tech_alpha > univ_alpha * 2.0 and tech_alpha > 0.02:
         dynamic_tech_cap = 0.45
 
     dynamic_eq_cap = _gex_equity_cap(gex_zscore, _MAX_EQUITY_WEIGHT, equity_urgency)
 
-    use_cvar = (
-        return_window is not None and
-        return_window.shape[0] >= 30 and
-        return_window.shape[1] == N_ASSETS
-    )
+    # PARCHE DE CONVICCIÓN: Si el IC rolling se vuelve negativo, podamos la exposición macro a renta variable
+    if rolling_ic < 0.0:
+        dynamic_eq_cap   = min(dynamic_eq_cap, 0.25)    # Cap defensivo duro a acciones
+        dynamic_tech_cap = min(dynamic_tech_cap, 0.20)   # Cap defensivo duro a tecnológicas
 
+    # DEFENSA DIMENSIONAL: Añadimos validación estricta de columnas para el solver CVXPY
+    use_cvar = (return_window is not None and return_window.shape[0] >= 30 and return_window.shape[1] == N_ASSETS)
     lam_cvar = 0.0
     if use_cvar:
         drift = float(np.abs(w_prev - w_prev.mean()).max())
@@ -329,6 +336,15 @@ def _mvo_weights(
             0.0, 1.0,
         ))
         if np.isnan(lam_cvar): lam_cvar = 0.0
+        
+        # ── INTENSIFICACIÓN DEFENSIVA CVaR (ANTÍDOTO DE COLAS EN F6) ─────────────
+        # Forzamos un suelo de riesgo de cola mínimo. El optimizador nunca podrá 
+        # ignorar las pérdidas extremas latentes en ventanas de estrés.
+        lam_cvar = max(lam_cvar, 0.02)
+        if rolling_ic < 0.0:
+            # Si la predictibilidad de la factoría se deteriora, multiplicamos
+            # por 1.5 el peso del CVaR, forzando una fuga inmediata hacia T-Bills.
+            lam_cvar *= 1.5
 
     w = cp.Variable(N_ASSETS)
     constraints = [
@@ -343,8 +359,15 @@ def _mvo_weights(
         constraints.append(cp.sum(w[_TECH_IDX]) <= dynamic_tech_cap)
         
     # Only apply cash constraint if we actually have cash assets
+    # EN LUGAR DE: constraints.append(cp.sum(w[_CASH_IDX]) <= w_max_cash)
+    # AHORA: Si estamos en crisis latente, obligamos al solver a mantener liquidez física real
+    # Only apply cash constraint if we actually have cash assets
+    # Restricción estricta de efectivo defensivo
     if len(_CASH_IDX) > 0:
-         constraints.append(cp.sum(w[_CASH_IDX]) <= w_max_cash)
+        if w_max_cash == 1.0 or equity_urgency > 0.7:
+            constraints.append(cp.sum(w[_CASH_IDX]) >= 0.40)  # Suelo obligatorio del 40% en liquidez
+        else:
+            constraints.append(cp.sum(w[_CASH_IDX]) <= w_max_cash)
 
     safe_alpha = np.nan_to_num(alpha, nan=0.0)
     expected_return    = safe_alpha.T @ w
@@ -688,7 +711,8 @@ class StandaloneBacktester:
             if "SHV" in TICKERS: target[TICKERS.index("SHV")] += (1.0 - scale) * 0.40
 
             regime_changed = s_label != self._prev_regime
-            cost_d, to     = self._rebalance(target, px, vol_d, adv, force=regime_changed)
+            # Forzamos force=False para que la banda de 80 bps proteja siempre el turnover
+            cost_d, to = self._rebalance(target, px, vol_d, adv, force=False)
             dr             = self._mtm(px)
             self._prev_regime = s_label
 
@@ -822,9 +846,16 @@ def main() -> None:
 
     pd.DataFrame([vars(r) for r in results]).to_csv(_WF_FOLDS, index=False)
     if results:
-        avg_oos = float(np.mean([f.oos_sharpe for f in results]))
+        oos_sharpes = [f.oos_sharpe for f in results]
+        avg_oos = float(np.mean(oos_sharpes))
         avg_is  = float(np.mean([f.is_sharpe  for f in results]))
-        logger.info(f"WF summary: avg IS={avg_is:.3f} | avg OOS={avg_oos:.3f} | {_wf_verdict(avg_is, avg_oos)}")
+        
+        # CRITERIO DE SELECCIÓN ROBUSTO: No más catástrofes ocultas
+        robust_score = np.median(oos_sharpes) - 0.5 * np.std(oos_sharpes) + 0.25 * np.min(oos_sharpes)
+        
+        logger.info(f"WF summary: avg IS={avg_is:.3f} | avg OOS={avg_oos:.3f}")
+        logger.info(f"🏆 ROBUST SCORE (Worst-Fold Aware): {robust_score:.4f}")
+        logger.info(f"WF Verdict: {_wf_verdict(avg_is, avg_oos)}")
 
     r_arr = ts["daily_return"].values
     v95   = float(np.percentile(r_arr, 5))

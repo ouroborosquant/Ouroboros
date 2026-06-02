@@ -472,7 +472,9 @@ class StandaloneBacktester:
             cost  += c
             self.cash   += -dol - c
             self.pos[t]  = self.pos.get(t, 0.0) + shares
-        self._prev_weights = target.copy().astype(np.float64)
+            
+        # REGISTRO DE TRACCIÓN: Guardamos las posiciones reales que terminaron en la cuenta, no el target
+        self._prev_weights = self._current_weights(px).astype(np.float64)
         return cost / (self.nav + 1e-10), float(0.5 * np.sum(np.abs(target - current)))
 
     def run(self, prices_df, returns_df, regime_df, alpha_df, gex_df,
@@ -531,6 +533,9 @@ class StandaloneBacktester:
             ds     = str(date.date())
             gi     = prices_df.index.get_loc(date)
             px     = prices_df.iloc[gi].reindex(TICKERS).fillna(1.0).values.astype(np.float64)
+
+            # CALIBRACIÓN DE TRÁFICO: Calculamos los pesos reales y vivos del portafolio hoy
+            current_w = self._current_weights(px).astype(np.float64)
 
             sig_strength = float(alpha_abs_mean.get(date, _SIGNAL_STRENGTH_CEIL))
             roll_ic      = float(rolling_ic_series.get(date, 0.0))
@@ -628,10 +633,17 @@ class StandaloneBacktester:
 
             def _mvo_dispatch(a: np.ndarray, v: np.ndarray) -> np.ndarray:
                 return _mvo_weights(
-                    a, cov_d, z0, v, self._prev_weights, equity_urgency,
-                    ret_window if ret_window.shape[0] >= 30 else None,
-                    signal_strength=sig_strength, rolling_ic=roll_ic, gex_alpha=gex_alp,
-                    w_max_cash=w_max_cash
+                    alpha           = a, 
+                    cov_d           = cov_d, 
+                    z0_smooth       = z0, 
+                    vol_d           = v, 
+                    prev_weights    = current_w,  # <── CAMBIO CRÍTICO: Comparamos contra las tenencias reales
+                    equity_urgency  = equity_urgency,
+                    return_window   = ret_window if ret_window.shape[0] >= 30 else None,
+                    signal_strength = sig_strength, 
+                    rolling_ic      = roll_ic, 
+                    gex_alpha       = gex_alp,
+                    w_max_cash      = w_max_cash
                 )
 
             target_series, alloc_tag = route_allocator(

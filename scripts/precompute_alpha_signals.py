@@ -383,18 +383,22 @@ def stage7_blend(
     """
     Blend 5 signals into the final alpha vector using dynamic GATv2 routing.
     """
-    # ── CAMBIO EXTRAORDINARIO: Conexión Neuronal GATv2 Activa ─────────────────
+    # ── CONEXIÓN NEURONAL CORREGIDA (Carga de State Dict) ───────────────────
     logger.info("Stage 7: Dynamic-weight blend via active GATv2 Router...")
 
     try:
-        # Importación dinámica del enrutador relacional de grafos
-        from models.router.gat_router import SignalRouterGAT
+        from models.alpha.gat_signal_router import SignalRouterGAT, N_SIGNALS
+        import torch
         
-        # Instanciamos el router cargando los nuevos pesos entrenados
-        router = SignalRouterGAT(weights_path="models/weights/gat_router.pt")
+        # Instanciamos la arquitectura limpia de la red
+        router = SignalRouterGAT(n_signals=N_SIGNALS)
         
-        # El enrutador procesa el diccionario de señales crudas y el contexto macro,
-        # calculando las puntuaciones de atención dinámicas día a día para los 100 activos.
+        # Cargamos el diccionario de pesos mapeando el state_dict de Fortress
+        checkpoint = torch.load("models/weights/gat_router.pt", map_location="cpu")
+        router.load_state_dict(checkpoint["model_state_dict"])
+        router.eval()   # Desactivamos BatchNorm/Dropout para inferencia
+        
+        # Invocamos la mezcla relacional dinámica
         alpha_raw_df = router.infer_alpha(
             signal_dfs=signal_dfs, 
             regime_df=regime_df, 

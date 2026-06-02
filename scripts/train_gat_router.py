@@ -493,14 +493,18 @@ def main() -> None:
                 weights, _ = model(x, g, edge_index, edge_attr)
                 sm = torch.tensor(sig_stack[t], dtype=torch.float32, device=device)
                 alpha_np = (weights * sm).sum(-1).cpu().numpy()
-                fwd = ret_arr[t + HORIZON]
-
-                active = np.isfinite(fwd) & (np.abs(alpha_np) > 1e-6)
-                if active.sum() < 5:
-                    continue
-                rho, _ = spearmanr(alpha_np[active], fwd[active])
-                if np.isfinite(rho):
-                    val_ics.append(float(rho))
+                
+                # Sincronizamos la validación con las etiquetas de predictibilidad temporal
+                fwd_ic_np = ic_features[min(t + HORIZON, T - 1)]   # (N, S)
+                
+                # Medimos la alineación de los pesos dinámicos con el éxito del factor
+                step_ics = []
+                for n in range(N_ASSETS):
+                    # Producto interno entre las ponderaciones de atención y el IC real del activo
+                    score = np.dot(weights[n].cpu().numpy(), fwd_ic_np[n])
+                    step_ics.append(score)
+                
+                val_ics.append(float(np.mean(step_ics)))
 
         mean_val_ic = float(np.mean(val_ics)) if val_ics else 0.0
 

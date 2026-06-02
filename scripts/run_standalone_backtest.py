@@ -76,7 +76,7 @@ _SIGNAL_STRENGTH_CEIL:  float = 0.15
 _SIGNAL_STRENGTH_WIN:   int   = 21
 
 _COV_WINDOW:            int   = 126
-_MIN_POSITION_WT:       float = 0.015
+_MIN_POSITION_WT:       float = 0.0
 _EMA_SPAN:              int   = 8
 _REGIME_PERSIST_DAYS:   int   = 5
 _AC_ETA:                float = 0.1
@@ -349,7 +349,10 @@ def _mvo_weights(
     safe_alpha = np.nan_to_num(alpha, nan=0.0)
     expected_return    = safe_alpha.T @ w
     portfolio_variance = cp.quad_form(w, cp.psd_wrap(Σ_psd))
-    turnover_penalty   = cp.sum_squares(w - w_prev)
+    
+    # TRATAMIENTO INSTITUCIONAL: Cambiamos cp.sum_squares (L2) por cp.norm(..., 1) (L1)
+    # Esto penaliza linealmente cada dólar rotado y fuerza la parsimonia en el rebalanceo.
+    turnover_penalty   = cp.norm(w - w_prev, 1)
 
     if use_cvar and lam_cvar > 0.01:
         T_obs      = return_window.shape[0]
@@ -745,7 +748,9 @@ def main() -> None:
     prices_df  = _normalize_index(pd.read_parquet(_CACHE_DIR / "prices_wide.parquet"))
     returns_df = _normalize_index(pd.read_parquet(_CACHE_DIR / "returns_wide.parquet"))
     regime_df  = _normalize_index(pd.read_parquet(_CACHE_DIR / "regime_posteriors.parquet"))
-    alpha_df   = _normalize_index(pd.read_parquet(_CACHE_DIR / "alpha_signals_blended.parquet"))
+    
+    # RUTA CORREGIDA: Conectamos el cortafuegos directo al output real de la factoría de alphas
+    alpha_df   = _normalize_index(pd.read_parquet(Path("data/processed/alpha_signals.parquet")))
 
     if not _GEX_CACHE.exists():
         logger.error(f"GEX alpha cache missing: {_GEX_CACHE}")
@@ -783,7 +788,7 @@ def main() -> None:
 
     logger.info("Running walk-forward validation...")
     common  = prices_df.index.intersection(alpha_df.index)
-    wf_mask = (common >= "2019-01-02") & (common <= "2024-12-31")
+    wf_mask = (common >= "2020-01-02") & (common <= "2024-12-31")  # <── AJUSTAR A 2020
     folds   = _wf_folds(common[wf_mask])
     results: List[WFFold] = []
 

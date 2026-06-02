@@ -158,40 +158,49 @@ class DataPipeline:
                 "DB pool not initialised. Call await pipeline.initialize_db_pool() first."
             )
 
-        # ── [0:25] Asset daily log-returns ─────────────────────────────────
+        # ── [0:25] Asset daily log-returns (CTE CHUNK-PRUNED DESIGN) ───────
         asset_query = """
-            SELECT
-                p.ticker,
-                LN(p.adj_close / NULLIF(
-                    LAG(p.adj_close) OVER (PARTITION BY p.ticker ORDER BY p.metric_date),
-                    0
-                )) AS daily_return
-            FROM prices p
-            WHERE
-                p.metric_date = (
-                    SELECT MAX(metric_date)
-                    FROM prices
-                    WHERE as_of_date <= $1::date
-                    AND   metric_date <= $1::date
-                )
-                AND p.as_of_date <= $1::date
-            ORDER BY p.ticker ASC
+            WITH target_date AS (
+                SELECT metric_date
+                FROM prices
+                WHERE ticker = 'SPY'
+                  AND as_of_date <= $1::date
+                  AND metric_date <= $1::date
+                  AND metric_date >= $1::date - INTERVAL '14 days'
+                ORDER BY metric_date DESC
+                LIMIT 1
+            ),
+            computed_returns AS (
+                SELECT
+                    p.metric_date,
+                    p.ticker,
+                    LN(p.adj_close / NULLIF(
+                        LAG(p.adj_close) OVER (PARTITION BY p.ticker ORDER BY p.metric_date ASC),
+                        0
+                    )) AS daily_return
+                FROM prices p
+                WHERE p.as_of_date <= $1::date
+                  AND p.metric_date <= $1::date
+                  AND p.metric_date >= $1::date - INTERVAL '30 days'
+            )
+            SELECT ticker, daily_return
+            FROM computed_returns
+            WHERE metric_date = (SELECT metric_date FROM target_date)
+            ORDER BY ticker ASC
             LIMIT 25;
         """
 
         # ── [25:37] FRED macro features ────────────────────────────────────
         macro_query = """
-            SELECT series_id, value
+            SELECT DISTINCT ON (series_id)
+                series_id,
+                value
             FROM fred_data
             WHERE series_id = ANY($2::text[])
-              AND metric_date = (
-                SELECT MAX(metric_date)
-                FROM fred_data
-                WHERE as_of_date <= $1::date
-                AND metric_date <= $1::date
-                AND series_id = ANY($2::text[])
-              )
-              AND as_of_date <= $1::date;
+              AND as_of_date <= $1::date
+              AND metric_date <= $1::date
+              AND metric_date >= $1::date - INTERVAL '120 days'
+            ORDER BY series_id ASC, metric_date DESC;
         """
 
         # ── [47:52] Microstructure aggregates ──────────────────────────────

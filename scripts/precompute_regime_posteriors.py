@@ -754,7 +754,8 @@ def _try_full_mode_inference(dates: pd.DatetimeIndex) -> bool:
                     "soft_crisis": float(s_p[3]),
                 })
                 
-                if len(rows) % 100 == 0:
+                # Change this line:
+                if len(rows) % 10 == 0:
                     logger.info(f" ⚡ Inference progress: {len(rows)} actual trading days processed...")
                     
             except Exception as e:

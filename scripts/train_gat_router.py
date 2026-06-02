@@ -79,8 +79,8 @@ GRAD_CLIP    = 1.0
 PURGE_DAYS   = 21       # embargo gap between train and val
 PATIENCE     = 30       # early stopping
 IC_WINDOW    = 63       # rolling IC estimation window for node features
-LAMBDA_ENT   = 0.05
-LAMBDA_L2_IC = 0.01
+LAMBDA_ENT   = 0.15     # Fuerza mayor dispersión (entropía) en los pesos asignados
+LAMBDA_L2_IC = 0.05     # Penaliza con dureza las desviaciones cuadráticas del IC predicho
 
 # Import constants from router (single source of truth)
 sys.path.insert(0, str(_BASE))
@@ -378,7 +378,7 @@ def main() -> None:
 
     # ── Model + optimizer ─────────────────────────────────────────────────────
     model     = SignalRouterGAT(n_signals=N_SIGNALS).to(device)
-    optimizer = optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
+    optimizer = optim.AdamW(model.parameters(), lr=3e-4, weight_decay=5e-3)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=N_EPOCHS, eta_min=1e-5)
 
     # ── Purged train/val split ─────────────────────────────────────────────────

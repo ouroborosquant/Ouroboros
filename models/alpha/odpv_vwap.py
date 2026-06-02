@@ -128,6 +128,18 @@ class ODPVEngine:
         mu   = roll.mean()
         sig  = roll.std().clip(lower=_MIN_SIGMA)
 
+        # Smooth Hyperbolic Volatility Saturation (Fix 3)
+        expanding_median = sig.expanding(min_periods=63).median()
+        cap_limit = 3.0 * expanding_median.replace(0, np.nan).ffill()
+        
+        # Smoothly saturate using x_capped = cap * tanh(x / cap)
+        valid_mask = cap_limit.notna() & (cap_limit > 0)
+        sig = pd.DataFrame(
+            np.where(valid_mask, cap_limit * np.tanh(sig / cap_limit), sig),
+            index=sig.index,
+            columns=sig.columns
+        )
+
         z      = (spread - mu) / (sig * self.tanh_scale)
         signal = np.tanh(z).astype(np.float32)
 

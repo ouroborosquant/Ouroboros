@@ -180,13 +180,47 @@ class FortressV5Pipeline(nn.Module):
         conf_result = self.conformal.predict(x_inp)
         mu_masked   = self.conformal.apply_masking(mu, conf_result.masked_assets)
 
+        # ── Macro Rate-Shock Risk-Controls (Fix 1 & Fix 2) ───────────────────
+        # Extract contemporaneous return paths for SPY (idx 0) and TLT (idx 3)
+        spy_scen = scenario_returns[:, 0]
+        tlt_scen = scenario_returns[:, 3]
+        
+        # Compute zero-lookahead, causal correlation coefficient
+        if len(spy_scen) > 1 and np.std(spy_scen) > 0 and np.std(tlt_scen) > 0:
+            eb_corr = float(np.corrcoef(spy_scen, tlt_scen)[0, 1])
+            if np.isnan(eb_corr):
+                eb_corr = -0.2
+        else:
+            eb_corr = -0.2
+
+        # Smooth Sigmoid Activation centered at +0.20 correlation boundary
+        # Honors the Differentiability Rule by avoiding sharp conditional switches
+        rate_shock_activation = 1.0 / (1.0 + np.exp(-15.0 * (eb_corr - 0.20)))
+        
+        # Fix 1: Dynamically scale up turnover penalty during equity-bond co-crashes
+        original_gamma = getattr(self.optimizer_, "gamma", 0.003)
+        rate_shock_multiplier = 1.0 + 2.0 * rate_shock_activation  # Scales up to 3.0x
+        
+        if hasattr(self.optimizer_, "gamma"):
+            self.optimizer_.gamma = original_gamma * rate_shock_multiplier
+
+        # Fix 2: Mitigate signal inversion by smoothly dampening momentum alpha vectors 
+        # when the asset-correlation regime transitions into an adversarial state
+        alpha_damp_factor = 1.0 - 0.5 * rate_shock_activation  # Soft-damps alpha up to 50%
+        mu_masked = mu_masked * alpha_damp_factor
+
         # 6. CVaR-MVO allocation
-        opt_result = self.optimizer_.solve(
-            mu                  = mu_masked,
-            scenario_returns    = scenario_returns,
-            w_prev              = w_prev,
-            exposure_multiplier = regime_state.exposure_multiplier,
-        )
+        try:
+            opt_result = self.optimizer_.solve(
+                mu                  = mu_masked,
+                scenario_returns    = scenario_returns,
+                w_prev              = w_prev,
+                exposure_multiplier = regime_state.exposure_multiplier,
+            )
+        finally:
+            # Always safely restore original optimizer settings for the next step
+            if hasattr(self.optimizer_, "gamma"):
+                self.optimizer_.gamma = original_gamma
 
         log.info(
             "FortressV5 decision: SR_exposure=%.2f regime=%d masked=%d "

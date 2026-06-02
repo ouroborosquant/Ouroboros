@@ -85,13 +85,13 @@ def is_conc_regime(breadth_ratio: float, top3_alpha: float = 0.0) -> bool:
     """
     return breadth_ratio < CONC_BREADTH_THRESHOLD and top3_alpha > CONC_TOP_ALPHA_FLOOR
 
-
 # ── IC-halt gate ──────────────────────────────────────────────────────────────
 
 def ic_halt_gated(
     rolling_ic:    float,
     ic_halt_days:  int,
     breadth_ratio: float,
+    top3_alpha:    float = 0.0,  # Added to accept top performance tracking
     *,
     ic_halt_threshold: float = -0.02,
     ic_halt_window:    int   = 15,
@@ -103,16 +103,13 @@ def ic_halt_gated(
       - If CONC regime: IC metric is structurally invalid (sparse alpha → negative IC
         by construction). Suppress halt entirely. Log the suppression.
       - If DISPERSED regime: apply standard IC-halt rule.
-
-    The IC is measured via Spearman rank correlation (NOT Pearson — reverted from v11.0).
-    Pearson on a sparse alpha vector (15+ near-zero values) is dominated by the zero-mass
-    and produces spurious negatives unrelated to signal quality.
     """
-    if is_conc_regime(breadth_ratio):
+    # FIX: Pass top3_alpha to prevent bear-market flat alpha arrays from triggering bypass
+    if is_conc_regime(breadth_ratio, top3_alpha):
         # Suppress halt: IC invalidity is structural, not informational
         return False, (
             f"CONC_REGIME_BYPASS breadth={breadth_ratio:.3f}<{CONC_BREADTH_THRESHOLD} "
-            f"rolling_IC={rolling_ic:+.4f} — IC halt suppressed"
+            f"top3_alpha={top3_alpha:.4f} — IC halt suppressed"
         )
 
     if rolling_ic < ic_halt_threshold and ic_halt_days >= ic_halt_window:

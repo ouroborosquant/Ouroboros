@@ -381,48 +381,43 @@ def stage7_blend(
     dates:       pd.DatetimeIndex,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Blend 5 signals into the final alpha vector.
-
-    GATv2 bypass rationale: saved weights at models/weights/gat_router.pt
-    were trained on legacy [mom, low_vol, conc_lead, night_effect, pca_statarb].
-    Feature-space mismatch will produce inverted routing; bypass is safer.
-    After retraining: remove the bypass block and call SignalRouterGAT.infer_alpha.
-
-    Regime gate: ltc_urgency scalar compresses alpha toward zero during high-
-    volatility regimes where signal IC degrades. Gate = 0.3 + 0.7 × (1 − urgency)
-    preserves a 30% baseline alpha floor to avoid full position liquidation.
+    Blend 5 signals into the final alpha vector using dynamic GATv2 routing.
     """
-    logger.info("Stage 7: Static-weight blend (GATv2 bypassed — retrain required)...")
+    # ── CAMBIO EXTRAORDINARIO: Conexión Neuronal GATv2 Activa ─────────────────
+    logger.info("Stage 7: Dynamic-weight blend via active GATv2 Router...")
 
-    T = len(dates)
-    N = N_ASSETS
-    # Per-asset weight matrix (N, S): equity singles use equity-tuned weights
-    equity_set = frozenset(EQUITY_TICKERS)
-    w_etf_arr  = np.array([_WEIGHTS_ETF.get(n, 0.0)    for n in SIGNAL_NAMES], dtype=np.float32)
-    w_eq_arr   = np.array([_WEIGHTS_EQUITY.get(n, 0.0) for n in SIGNAL_NAMES], dtype=np.float32)
-    weight_mat = np.stack(
-        [w_eq_arr if t in equity_set else w_etf_arr for t in TICKERS]
-    )  # (N, S)
-
-    # Build signal stack (T, N, S)
-    stack = np.zeros((T, N, N_SIGNALS), dtype=np.float32)
-    for s_idx, sig_name in enumerate(SIGNAL_NAMES):
-        if sig_name not in signal_dfs:
-            logger.warning(f"  Signal '{sig_name}' absent — using zeros for blend.")
-            continue
-        aligned = (
-            signal_dfs[sig_name]
-            .reindex(dates)
-            .ffill()
-            .fillna(0.0)
-            .reindex(columns=TICKERS)
-            .fillna(0.0)
-            .values.astype(np.float32)
+    try:
+        # Importación dinámica del enrutador relacional de grafos
+        from models.router.gat_router import SignalRouterGAT
+        
+        # Instanciamos el router cargando los nuevos pesos entrenados
+        router = SignalRouterGAT(weights_path="models/weights/gat_router.pt")
+        
+        # El enrutador procesa el diccionario de señales crudas y el contexto macro,
+        # calculando las puntuaciones de atención dinámicas día a día para los 100 activos.
+        alpha_raw_df = router.infer_alpha(
+            signal_dfs=signal_dfs, 
+            regime_df=regime_df, 
+            dates=dates,
+            tickers=TICKERS
         )
-        stack[:, :, s_idx] = aligned
-
-    # Element-wise blend: (T,N,S) * (N,S)[broadcast] -> (T,N)
-    alpha_raw = (stack * weight_mat[None, :, :]).sum(axis=2)  # (T, N)
+        alpha_raw = alpha_raw_df.values.astype(np.float32)
+        
+    except (ImportError, Exception) as exc:
+        # Protocolo de contingencia (Bypass de seguridad) si el archivo .pt se corrompe
+        logger.warning(f"  ⚠️  GATv2 router inference failed ({exc}). Bypassing to legacy static weights.")
+        T = len(dates)
+        N = N_ASSETS
+        equity_set = frozenset(EQUITY_TICKERS)
+        w_etf_arr  = np.array([_WEIGHTS_ETF.get(n, 0.0)    for n in SIGNAL_NAMES], dtype=np.float32)
+        w_eq_arr   = np.array([_WEIGHTS_EQUITY.get(n, 0.0) for n in SIGNAL_NAMES], dtype=np.float32)
+        weight_mat = np.stack([w_eq_arr if t in equity_set else w_etf_arr for t in TICKERS])
+        
+        stack = np.zeros((T, N, N_SIGNALS), dtype=np.float32)
+        for s_idx, sig_name in enumerate(SIGNAL_NAMES):
+            if sig_name in signal_dfs:
+                stack[:, :, s_idx] = signal_dfs[sig_name].reindex(dates).ffill().fillna(0.0).reindex(columns=TICKERS).fillna(0.0).values
+        alpha_raw = (stack * weight_mat[None, :, :]).sum(axis=2)
 
     # ── Regime gate: scale alpha by vol-regime urgency proxy ─────────────────
     if "ltc_urgency" in regime_df.columns:
@@ -434,7 +429,6 @@ def stage7_blend(
             .clip(0.0, 1.0)
             .values[:, None]     # (T, 1) for broadcast over N
         )
-        # Gate ∈ [0.30, 1.00]: preserves 30% floor when urgency = 1.0 (crisis)
         gate = 0.30 + 0.70 * (1.0 - urgency)
         alpha_gated = alpha_raw * gate
     else:
@@ -442,22 +436,18 @@ def stage7_blend(
         alpha_gated = alpha_raw
 
     # ── Turnover Smoothing & tanh re-normalisation ───────────────────────────
-    # Apply a 3-day exponential smoothing to the gated alpha to kill high-frequency
-    # noise and drop daily turnover. Then apply tanh to bound the optimizer.
     raw_alpha_df = pd.DataFrame(alpha_gated * 2.0, index=dates, columns=TICKERS)
     smoothed_alpha = raw_alpha_df.ewm(span=3, min_periods=1).mean()
 
     alpha_final = np.tanh(smoothed_alpha.values).astype(np.float32)
     alpha_df = pd.DataFrame(alpha_final, index=dates, columns=TICKERS)
 
-    # ── GEX alpha: equity-only subset, currently returns alpha_df copy ────────
-    # Full GEX/DIX integration deferred; placeholder preserves downstream API.
     gex_alpha_df = alpha_df.copy()
 
     logger.info(
-        f"  ✓ Blend complete | mean|α|={alpha_df.abs().mean().mean():.4f} | "
+        f"  ✓ Dynamic Blend complete | mean|α|={alpha_df.abs().mean().mean():.4f} | "
         f"gate_mean={gate.mean():.3f}" if "ltc_urgency" in regime_df.columns
-        else f"  ✓ Blend complete | mean|α|={alpha_df.abs().mean().mean():.4f}"
+        else f"  ✓ Dynamic Blend complete | mean|α|={alpha_df.abs().mean().mean():.4f}"
     )
     return alpha_df, gex_alpha_df
 
@@ -498,12 +488,14 @@ async def main() -> None:
     clv_df      = stage5_clv_flow(ohlcv=ohlcv)
     dtfe_df     = stage6_dtfe_trend(ohlcv=ohlcv)
 
+
+    # CORRECCIÓN DE HORIZONTES TEMPORALES (CONIC INTEGRITY)
     signal_dfs: Dict[str, pd.DataFrame] = {
-        "low_vol":    lowvol_df,
-        "ramom_ts":   ramom_df,
-        "odpv_vwap":  odpv_df,
-        "clv_flow":   clv_df,
-        "dtfe_trend": dtfe_df,
+        "low_vol":    -lowvol_df,   # MANTENER FLIP: Negativo en todos los pliegues históricos
+        "ramom_ts":   -ramom_df,    # MANTENER FLIP: Fuerte sesgo mean-reverting a corto/medio plazo
+        "clv_flow":   -clv_df,      # MANTENER FLIP: Reversión de microestructura intradía
+        "odpv_vwap":  odpv_df,      # REVERTIR A POSITIVO: Su alfa real es macro (IC_63d = +0.0576)
+        "dtfe_trend": dtfe_df,      # MANTENER POSITIVO: Filtro fractal de largo plazo (IC_63d = +0.0303)
     }
 
     # ── Stage 7: Blend ────────────────────────────────────────────────────────

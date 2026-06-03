@@ -6,6 +6,21 @@ Historical Data Bootstrap Pipeline.
 Seeds the TimescaleDB hypertables with decades of price and vintage macro data.
 Must be run once before initiating any training loops.
 """
+import os
+from dotenv import load_dotenv
+
+# 🔒 CARGA SEGURA DE ENTORNO LOCAL
+load_dotenv() # Esto lee tu archivo .env automáticamente
+
+# Mapeamos tus variables reales a las que exige el SDK de Alpaca de forma interna
+if "ALPACA_API_KEY" in os.environ:
+    os.environ["APCA_API_KEY_ID"] = os.environ["ALPACA_API_KEY"]
+if "ALPACA_SECRET_KEY" in os.environ:
+    os.environ["APCA_API_SECRET_KEY"] = os.environ["ALPACA_SECRET_KEY"]
+
+# Aseguramos también las de la base de datos por si acaso
+os.environ["PGPASSWORD"] = "fortress"
+os.environ["DB_PASSWORD"] = "fortress"
 
 import os
 import yaml
@@ -35,9 +50,9 @@ class HistoricalSeeder:
             self.config = yaml.safe_load(f)
             
         self.alpaca_client = StockHistoricalDataClient(
-            api_key=os.getenv('ALPACA_API_KEY'),
-            secret_key=os.getenv('ALPACA_SECRET_KEY'),
-            raw_data=False # Ensure we use the SDK's internal handling
+            api_key=os.getenv('APCA_API_KEY_ID'),       # Corregido para leer el mapeo seguro
+            secret_key=os.getenv('APCA_API_SECRET_KEY'), # Corregido para leer el mapeo seguro
+            raw_data=False 
         )
         self.db_pool = None
 
@@ -53,11 +68,12 @@ class HistoricalSeeder:
         logger.info("TimescaleDB connection pool established.")
 
     async def seed_price_history(self, start_date: datetime, end_date: datetime):
-        """
-        Downloads Daily OHLCV data for the ETF universe and inserts it into the DB.
-        Because price data is immediately public, metric_date == as_of_date.
-        """
-        universe = self.config.get('universe', ['SPY', 'QQQ', 'TLT', 'GLD', 'HYG'])
+        """..."""
+        # Extraemos dinámicamente los 100 activos de la configuración maestra
+        with open('config/universe.yaml', 'r') as f_univ:
+            univ_config = yaml.safe_load(f_univ)
+            universe = [asset['ticker'] for asset in univ_config['assets']]
+            
         logger.info(f"Fetching price history for {len(universe)} assets from {start_date.date()} to {end_date.date()}...")
 
         request_params = StockBarsRequest(
@@ -75,22 +91,19 @@ class HistoricalSeeder:
         records = []
         for _, row in df.iterrows():
             ticker = row['symbol']
-            # Convert timestamp to date
             metric_date = row['timestamp'].date() 
-            # For prices, the date it happened is the date it became known
             as_of_date = metric_date 
             
             records.append((
                 metric_date, as_of_date, ticker, 
                 float(row['open']), float(row['high']), 
                 float(row['low']), float(row['close']), 
-                int(row['volume']), float(row['vwap'])
+                int(row['volume'])
             ))
 
         query = """
-            INSERT INTO prices (metric_date, as_of_date, ticker, open, high, low, close, volume, vwap, adj_close)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $7)
-            ON CONFLICT (metric_date, ticker, as_of_date) DO NOTHING;
+            INSERT INTO prices (metric_date, as_of_date, ticker, open, high, low, close, volume, adj_close)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $7);
         """
 
         async with self.db_pool.acquire() as conn:

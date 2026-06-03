@@ -83,68 +83,49 @@ _LAMBDA_TURNOVER: float = 0.10   # Turnover penalty coefficient
 # Differentiable economic loss
 # ─────────────────────────────────────────────────────────────────────────────
 
+# 🔍 REEMPLAZA LA FUNCIÓN _differentiable_sortino COMPLETA POR:
 def _differentiable_sortino(
     portfolio_returns: torch.Tensor,
     rf_daily:          float = 0.05 / 252,
 ) -> torch.Tensor:
     """
-    Differentiable Sortino Ratio (negated — minimise to maximise Sortino).
-
+    Differentiable Sortino Ratio con blindaje ante colapso de denominador.
     Sortino = (μ_excess) / σ_downside * √252
-    where σ_downside is the semi-deviation of returns below zero.
-
-    Gradient note: The min(r, 0)² formulation produces a sub-gradient at r=0,
-    but this is acceptable because the kink has measure zero and the
-    expectation of returns below exactly zero is negligible in practice.
-    Empirically, the gradient is well-behaved through this during training.
-
-    Args:
-        portfolio_returns: Shape (Batch,) — one portfolio return per sample.
-        rf_daily:          Daily risk-free rate.
-
-    Returns:
-        Scalar — negated annualised Sortino (to be minimised by gradient descent).
     """
     excess      = portfolio_returns - rf_daily
     mean_excess = excess.mean()
 
-    # Semi-variance: E[min(r, 0)²]
+    # Variancia a la baja: E[min(r, 0)²]
     downside_sq  = torch.clamp(portfolio_returns, max=0.0) ** 2
-    semi_std     = torch.sqrt(downside_sq.mean() + 1e-8) * math.sqrt(252)
+    
+    # BLINDAJE ANTIBUG: Añadimos un suelo rígido de volatilidad a la baja (5% anualizado)
+    # Esto evita que el denominador colapse a cero si el modelo elimina las pérdidas del lote
+    semi_std     = torch.sqrt(downside_sq.mean() + 1e-6) * math.sqrt(252)
+    semi_std     = torch.clamp(semi_std, min=0.05)
 
     sortino = (mean_excess * 252) / semi_std
-    return -sortino   # negate: we minimise loss
+    
+    # Truncamiento defensivo del espacio de salida para proteger los gradientes del Transformer
+    return -torch.clamp(sortino, min=-50.0, max=50.0)
 
 
-def _differentiable_calmar(
+# 🔍 BUSCA Y ELIMINA LA FUNCIÓN _differentiable_calmar COMPLETA Y REEMPLÁZALA POR:
+def _differentiable_cvar(
     portfolio_returns: torch.Tensor,
+    alpha: float = 0.05,
 ) -> torch.Tensor:
     """
-    Differentiable Calmar Ratio (negated).
-
-    Calmar = CAGR / |Max Drawdown|
-
-    Max drawdown is approximated via a soft cumsum:
-        DD_t = P_t - max_{s≤t} P_s
-        MaxDD = min_t DD_t
-
-    The running max is not differentiable at exactly the maximum point.
-    We use `torch.cummax` which returns gradients via straight-through.
-
-    Args:
-        portfolio_returns: Shape (Batch,) treated as a time-series of daily returns.
-
-    Returns:
-        Scalar — negated Calmar (to be minimised).
+    Differentiable Conditional Value-at-Risk (CVaR) / Expected Shortfall.
+    Measures the expected return of the worst alpha-quantile (5%) days in the batch.
+    
+    Minimizing the negative CVaR forces the model to clip and protect the tail
+    of the portfolio distribution without using broken sequence compounding.
     """
-    T    = portfolio_returns.shape[0]
-    cum  = torch.cumprod(1.0 + portfolio_returns, dim=0)
-    peak = torch.cummax(cum, dim=0).values
-    dd   = (cum - peak) / (peak + 1e-8)          # always ≤ 0
-    max_dd = torch.abs(dd.min()) + 1e-8
-
-    cagr = cum[-1] ** (252.0 / max(T, 1)) - 1.0
-    return -(cagr / max_dd)
+    sorted_returns, _ = torch.sort(portfolio_returns)
+    k = max(1, int(alpha * sorted_returns.shape[0]))
+    worst_tail = sorted_returns[:k]
+    # Retornamos el promedio negativo para que el optimizador maximice los retornos de cola
+    return -worst_tail.mean()
 
 
 def _turnover_penalty(
@@ -164,43 +145,45 @@ def _turnover_penalty(
     return torch.abs(weights_curr - weights_prev).sum(dim=-1).mean() * 0.5
 
 
+# 🔍 CÓDIGO A REEMPLAZAR:
 def economic_loss(
     predicted_weights:   torch.Tensor,
     realized_returns:    torch.Tensor,
     prev_weights:        Optional[torch.Tensor] = None,
-    lambda_calmar:       float = _LAMBDA_CALMAR,
+    lambda_cvar:         float = 0.50,          # Peso del riesgo de cola (CVaR)
     lambda_turnover:     float = _LAMBDA_TURNOVER,
 ) -> torch.Tensor:
-    """
-    Composite economic loss: Sortino + Calmar + Turnover.
-
-        L_econ = -Sortino(w·r) - λ_c * Calmar(w·r) + λ_t * Turnover(w, w_prev)
-
-    All components are computed on the portfolio returns implied by the
-    predicted weights, making the entire objective end-to-end differentiable
-    with respect to the EDT's noise prediction network.
-
-    Args:
-        predicted_weights: Shape (Batch, Assets) — softmax-normalised weights.
-        realized_returns:  Shape (Batch, Assets) — ex-post daily returns (from DB).
-        prev_weights:      Shape (Batch, Assets) — prior-period weights, or None.
-        lambda_calmar:     Weight on Calmar component.
-        lambda_turnover:   Weight on turnover penalty.
-
-    Returns:
-        Scalar economic loss tensor.
-    """
-    # Portfolio returns: dot product of weights and asset returns
+    # Retornos de la cartera implícitos por los pesos del EDT
     port_returns = (predicted_weights * realized_returns).sum(dim=-1)   # (Batch,)
 
+    # Métricas diferenciables válidas para observaciones independientes (sin cumprod)
     l_sortino = _differentiable_sortino(port_returns)
-    l_calmar  = lambda_calmar * _differentiable_calmar(port_returns)
+    l_cvar    = lambda_cvar * _differentiable_cvar(port_returns)
 
     l_turnover = torch.tensor(0.0, device=predicted_weights.device)
     if prev_weights is not None and lambda_turnover > 0:
         l_turnover = lambda_turnover * _turnover_penalty(predicted_weights, prev_weights)
 
-    return l_sortino + l_calmar + l_turnover
+    return l_sortino + l_cvar + l_turnover
+
+# 🔄 REEMPLAZAR POR:
+def economic_loss(
+    predicted_weights:   torch.Tensor,
+    realized_returns:    torch.Tensor,
+    prev_weights:        Optional[torch.Tensor] = None,
+    lambda_cvar:         float = 0.50, # Ponderación rígida del riesgo de cola
+    lambda_turnover:     float = _LAMBDA_TURNOVER,
+) -> torch.Tensor:
+    port_returns = (predicted_weights * realized_returns).sum(dim=-1)   # (Batch,)
+
+    l_sortino = _differentiable_sortino(port_returns)
+    l_cvar    = lambda_cvar * _differentiable_cvar(port_returns)
+
+    l_turnover = torch.tensor(0.0, device=predicted_weights.device)
+    if prev_weights is not None and lambda_turnover > 0:
+        l_turnover = lambda_turnover * _turnover_penalty(predicted_weights, prev_weights)
+
+    return l_sortino + l_cvar + l_turnover
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -310,7 +293,7 @@ async def _load_db_trajectories(
     try:
         import pandas as pd
 
-        alpha_path = "research/outputs/cache/alpha_signals.parquet"
+        alpha_path = "data/processed/alpha_signals.parquet"
         if not os.path.exists(alpha_path):
             logger.warning(f"Alpha signals parquet not found: {alpha_path}. Using synthetic fallback.")
             return None
@@ -329,8 +312,8 @@ async def _load_db_trajectories(
 
         # Fetch realised returns from TimescaleDB
         query = """
-            SELECT metric_date, ticker, daily_return
-            FROM market_data_daily
+            SELECT metric_date, ticker, close
+            FROM prices
             WHERE metric_date >= $1 AND metric_date <= $2
               AND ticker = ANY($3)
             ORDER BY metric_date, ticker
@@ -347,10 +330,26 @@ async def _load_db_trajectories(
             return None
 
         import pandas as pd
-        ret_df = pd.DataFrame(rows, columns=["metric_date", "ticker", "daily_return"])
+        # Cambiamos "daily_return" por "close" en las columnas
+        ret_df = pd.DataFrame(rows, columns=["metric_date", "ticker", "close"])
+        logger.info(f"📊 DIAGNÓSTICO DB: Filas recuperadas = {len(ret_df)}")
+        logger.info(f"📊 TICKERS EN PARQUET DE ALPHAS: {tickers[:5]}... (Total: {len(tickers)})")
+        logger.info(f"📊 TICKERS EN BASE DE DATOS: {ret_df['ticker'].unique()[:5]}... (Total: {ret_df['ticker'].nunique()})")
+        
         ret_df["metric_date"] = pd.to_datetime(ret_df["metric_date"])
-        ret_pivot = ret_df.pivot(index="metric_date", columns="ticker", values="daily_return")
-        ret_pivot = ret_pivot.reindex(columns=tickers).fillna(0.0)
+        ret_pivot = ret_df.pivot(index="metric_date", columns="ticker", values="close")
+        ret_pivot = ret_pivot.reindex(columns=tickers).sort_index()
+        ret_pivot = ret_pivot.pct_change().fillna(0.0)
+
+        common_dates = alpha_df.index.intersection(ret_pivot.index)
+        logger.info(f"📊 INTERSECCIÓN DE FECHAS (Common Dates): {len(common_dates)} días comunes encontrados.")
+
+        ret_df["metric_date"] = pd.to_datetime(ret_df["metric_date"])
+        ret_pivot = ret_df.pivot(index="metric_date", columns="ticker", values="close")
+        ret_pivot = ret_pivot.reindex(columns=tickers).sort_index()
+        
+        # Calculamos el retorno diario en memoria a partir de los cierres reales
+        ret_pivot = ret_pivot.pct_change().fillna(0.0)
 
         # Align alpha signals and returns on common dates
         common_dates = alpha_df.index.intersection(ret_pivot.index)
@@ -380,11 +379,16 @@ async def _load_db_trajectories(
         rtg     = cum_ret[-1] / np.maximum(cum_ret, 1e-8)
         rtg_arr = np.log1p(rtg).clip(-5, 5).astype(np.float32)
 
+        # Desplazar opt_weights para simular los pesos del día anterior
+        prev_weights = np.roll(opt_weights, shift=1, axis=0)
+        prev_weights[0] = 1.0 / n_assets
+
         dataset = TensorDataset(
             torch.from_numpy(states),                              # (N, state_dim)
             torch.from_numpy(rtg_arr[:, None]),                    # (N, 1)
             torch.from_numpy(opt_weights),                         # (N, n_assets)
             torch.from_numpy(ret_aligned),                         # (N, n_assets)
+            torch.from_numpy(prev_weights),                        # (N, n_assets) <-- NUEVO
         )
 
         logger.info(f"Loaded {N:,} real trajectories from DB + alpha parquet.")
@@ -459,16 +463,42 @@ class EDTTrainer:
         self.batch_size = self.config.get("batch_size", 128)
         self.lr         = float(self.config.get("learning_rate", 3e-4))
         self.state_dim  = self.config.get("state_dim", 192)
-        self.action_dim = self.config.get("action_dim", 25)
+        
+        # Leemos dinámicamente el número de acciones desde el archivo de señales
+        import pandas as pd
+        if os.path.exists("data/processed/alpha_signals.parquet"):
+            alpha_dummy = pd.read_parquet("data/processed/alpha_signals.parquet")
+            self.action_dim = len([c for c in alpha_dummy.columns if c != "date"])
+        else:
+            self.action_dim = self.config.get("action_dim", 25)
+            
+        self.config["action_dim"] = self.action_dim # Forzamos la actualización en la config
+        
         n_diff_steps    = self.config.get("diffusion_action_steps", 20)
 
         from models.portfolio.edt_agent import ElasticDecisionTransformer
         self.model  = ElasticDecisionTransformer(self.config).to(self.device)
         self.sched  = CosineNoiseSchedule(n_steps=n_diff_steps).to(self.device)
-        self.scaler = GradScaler()
+        
+        # Corrección del GradScaler deprecado para entornos CUDA modernos
+        self.scaler = torch.amp.GradScaler('cuda')
 
+        # Deducimos dinámicamente la dimensión interna d_model del Transformer
+        with torch.no_grad():
+            dummy_rtg = torch.zeros(1, 1, device=self.device)
+            self.d_model = self.model.embed_return(dummy_rtg).shape[-1]
+
+        # Inicializamos las capas de proyección de contexto dentro del Trainer
+        self.ctx_proj_short = nn.Linear(self.d_model, self.d_model).to(self.device)
+        self.ctx_proj_med   = nn.Linear(self.d_model, self.d_model).to(self.device)
+        self.ctx_proj_long  = nn.Linear(self.d_model, self.d_model).to(self.device)
+
+        # Registramos todos los parámetros en el optimizador de forma unificada
         self.optimizer = torch.optim.AdamW(
-            self.model.parameters(),
+            list(self.model.parameters()) +
+            list(self.ctx_proj_short.parameters()) +
+            list(self.ctx_proj_med.parameters()) +
+            list(self.ctx_proj_long.parameters()),
             lr=self.lr,
             weight_decay=1e-4,
             betas=(0.9, 0.95),
@@ -507,6 +537,7 @@ class EDTTrainer:
         rtg:             torch.Tensor,
         opt_weights:     torch.Tensor,
         realized_returns: torch.Tensor,
+        prev_weights:    torch.Tensor, # <-- NUEVO
     ) -> Tuple[torch.Tensor, Dict[str, float]]:
         """
         Single forward pass producing the composite loss.
@@ -527,16 +558,20 @@ class EDTTrainer:
         B = states.shape[0]
 
         # ── Sequence construction ─────────────────────────────────────────────
-        rtg_emb   = self.model.embed_return(rtg)                        # (B, 1, d)
-        state_emb = self.model.embed_state(states.unsqueeze(1))         # (B, 1, d)
+        rtg_emb = self.model.embed_return(rtg)                        
+        if rtg_emb.dim() == 2:
+            rtg_emb = rtg_emb.unsqueeze(1)  # Forzar alineación a (B, 1, d)
 
-        # Simulate multi-scale context via learned projections on state embedding
-        # (Matches inference path in edt_agent.py where state history is available)
-        d = state_emb.shape[-1]
-        short_ctx = self.model.ctx_proj_short(state_emb)   # (B, 1, d)
-        med_ctx   = self.model.ctx_proj_med(state_emb)     # (B, 1, d)
-        long_ctx  = self.model.ctx_proj_long(state_emb)    # (B, 1, d)
+        state_emb = self.model.embed_state(states.unsqueeze(1))         
+        if state_emb.dim() == 2:
+            state_emb = state_emb.unsqueeze(1)  # Guardia defensiva para el estado
 
+        # Extraemos las proyecciones usando los módulos locales entrenables
+        short_ctx = self.ctx_proj_short(state_emb)   # (B, 1, d)
+        med_ctx   = self.ctx_proj_med(state_emb)     # (B, 1, d)
+        long_ctx  = self.ctx_proj_long(state_emb)    # (B, 1, d)
+
+        # Ahora todos los tensores comparten estrictamente 3 dimensiones (B, 1, d)
         seq      = torch.cat([rtg_emb, state_emb, short_ctx, med_ctx, long_ctx], dim=1)  # (B, 5, d)
         trans_out = self.model.transformer(seq)             # (B, 5, d)
         context   = trans_out[:, -1, :]                     # (B, d)
@@ -556,9 +591,16 @@ class EDTTrainer:
         # ── Economic loss on reconstructed clean weights ──────────────────────
         x0_hat  = self.sched.predict_x0(x_t, eps_hat, t_indices)
         w_clean = F.softmax(x0_hat, dim=-1)   # enforce simplex constraint
-        l_econ  = economic_loss(w_clean, realized_returns)
+        
+        # Leemos los lambdas dinámicamente desde hyperparams.yaml
+        l_econ  = economic_loss(
+            w_clean, 
+            realized_returns, 
+            prev_weights=prev_weights, 
+            lambda_turnover=float(self.config.get("lambda_turnover", 5.0))
+        )
 
-        loss = l_diff + _LAMBDA_ECON * l_econ
+        loss = l_diff + float(self.config.get("lambda_econ", 0.30)) * l_econ
 
         return loss, {
             "loss_total":  loss.item(),
@@ -566,25 +608,25 @@ class EDTTrainer:
             "loss_econ":   l_econ.item(),
         }
 
-    def train(self, db_pool=None) -> None:
-        """
-        Full training loop.
-
-        Args:
-            db_pool: Optional asyncpg pool. If None, uses synthetic causal dataset.
-        """
-        # Dataset: prefer real DB data, fall back to causal synthetic
+    async def train(self, db_pool=None) -> None: # <-- Añadido async
         if db_pool is not None:
             try:
-                dataset = asyncio.run(_load_db_trajectories(self.config, self.device, db_pool))
-            except Exception:
+                # Eliminamos asyncio.run y usamos await nativo
+                dataset = await _load_db_trajectories(self.config, self.device, db_pool)
+            except Exception as e:
+                import traceback
+                logger.error("❌ EL PROCESAMIENTO DE TRAYECTORIAS HA FALLADO INTERNAMENTE:")
+                traceback.print_exc()  # <--- Esto nos va a decir la línea exacta del fallo
                 dataset = None
         else:
             dataset = None
 
         if dataset is None:
-            logger.warning("Using causally-structured synthetic dataset.")
-            dataset = _synthetic_fallback_dataset(self.config)
+            # BLINDAJE: Bloqueamos el uso de datos falsos para evitar reward hacking en backtest
+            raise RuntimeError(
+                "CRITICAL ERROR: El EDT no puede entrenarse sin las trayectorias reales de TimescaleDB. "
+                "Verifica que el contenedor esté arriba y que las migraciones de 'market_data_daily' hayan concluido."
+            )
 
         dl       = self._build_dataloader(dataset)
         lr_sched = self._build_lr_scheduler(len(dl))
@@ -598,19 +640,20 @@ class EDTTrainer:
             self.model.train()
             epoch_loss = epoch_diff = epoch_econ = 0.0
 
-            for states, rtg, opt_weights, realized_returns in dl:
-                states, rtg, opt_weights, realized_returns = (
+            for states, rtg, opt_weights, realized_returns, prev_weights in dl:
+                states, rtg, opt_weights, realized_returns, prev_weights = (
                     states.to(self.device),
                     rtg.to(self.device),
                     opt_weights.to(self.device),
                     realized_returns.to(self.device),
+                    prev_weights.to(self.device),
                 )
 
                 self.optimizer.zero_grad(set_to_none=True)
 
-                with autocast():
+                with torch.amp.autocast('cuda'):
                     loss, metrics = self._forward_and_loss(
-                        states, rtg, opt_weights, realized_returns
+                        states, rtg, opt_weights, realized_returns, prev_weights
                     )
 
                 self.scaler.scale(loss).backward()
@@ -618,8 +661,8 @@ class EDTTrainer:
                 self.scaler.unscale_(self.optimizer)
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
                 self.scaler.step(self.optimizer)
+                lr_sched.step() # El scheduler debe actualizarse antes de que el scaler cierre el paso
                 self.scaler.update()
-                lr_sched.step()
 
                 epoch_loss += metrics["loss_total"]
                 epoch_diff += metrics["loss_diff"]
@@ -651,5 +694,25 @@ class EDTTrainer:
 
 
 if __name__ == "__main__":
-    trainer = EDTTrainer()
-    trainer.train()
+    import asyncpg
+    import os
+
+    async def main_run():
+        # Inicializamos el pool con las credenciales mapeadas de producción
+        db_pool = await asyncpg.create_pool(
+            user=os.getenv('DB_USER', 'postgres'),
+            password=os.getenv('DB_PASSWORD', 'fortress'),
+            database=os.getenv('DB_NAME', 'fortress'),
+            host=os.getenv('DB_HOST', 'localhost'),
+            port=os.getenv('DB_PORT', '5432')
+        )
+        
+        try:
+            trainer = EDTTrainer()
+            # Añadimos await porque train ahora es una corrutina asíncrona
+            await trainer.train(db_pool=db_pool)
+        finally:
+            await db_pool.close()
+
+    # Ejecutamos el pipeline dentro del bucle de eventos asíncronos
+    asyncio.run(main_run())

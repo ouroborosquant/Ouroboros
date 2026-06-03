@@ -82,14 +82,26 @@ IC_WINDOW    = 63       # rolling IC estimation window for node features
 LAMBDA_ENT   = 0.15     # Fuerza mayor dispersión (entropía) en los pesos asignados
 LAMBDA_L2_IC = 0.05     # Penaliza con dureza las desviaciones cuadráticas del IC predicho
 
-# Import constants from router (single source of truth)
+# Import baseline objects from router definition
 sys.path.insert(0, str(_BASE))
 from models.alpha.gat_signal_router import (
-    SIGNAL_NAMES, N_SIGNALS, N_ASSETS, TICKERS,
-    NODE_FEAT_DIM, GLOBAL_FEAT_DIM,
-    SignalRouterGAT, signal_router_loss, build_economic_graph,
+    TICKERS, SignalRouterGAT, signal_router_loss, build_economic_graph,
     _ASSET_CLASS_FEATS,
 )
+
+# Explicitly override constants to decouple from the legacy 5-signal core
+SIGNAL_NAMES: List[str] = [
+    "low_vol", "ramom_ts", "odpv_vwap", "clv_flow", "dtfe_trend",
+    "res_mom", "cw_spread", "ami_impact", "real_skew", "vol_decouple"
+]
+N_SIGNALS: int = len(SIGNAL_NAMES)
+N_ASSETS:  int = len(TICKERS)
+
+# Dynamically calculate sizes: 
+# Node: (10 Signals + 10 ICs) + 2 Betas + 3 Vol Stats + 3 Asset Class Identifiers = 28
+NODE_FEAT_DIM: int = 2 * N_SIGNALS + 8   
+# Global: 3 Base Metrics + 10 Signal Means + 10 IC Means + 3 Contextual Identifiers = 26
+GLOBAL_FEAT_DIM: int = 2 * N_SIGNALS + 6
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -131,40 +143,34 @@ def _compute_rolling_ic(
 
 
 def build_node_features(
-    sig_slice:    np.ndarray,   # (N, S)  current signals
-    ic_slice:     np.ndarray,   # (N, S)  rolling |IC| per signal
-    vol_arr:      np.ndarray,   # (N,)    63d realised vol
-    skew_arr:     np.ndarray,   # (N,)    21d skew
-    kurt_arr:     np.ndarray,   # (N,)    21d excess kurtosis
-    spy_betas:    np.ndarray,   # (N,)    63d OLS beta vs SPY
-    vix_betas:    np.ndarray,   # (N,)    63d OLS beta vs VIX changes
+    sig_slice:    np.ndarray,   
+    ic_slice:     np.ndarray,   
+    vol_arr:      np.ndarray,   
+    skew_arr:     np.ndarray,   
+    kurt_arr:     np.ndarray,   
+    spy_betas:    np.ndarray,   
+    vix_betas:    np.ndarray,   
 ) -> np.ndarray:
-    """
-    Assemble (N, NODE_FEAT_DIM=18) node feature matrix.
-
-    Layout:
-      [0:5]   signal values   (already Z-scored + tanh-bounded at engine level)
-      [5:10]  rolling |IC|
-      [10:12] [spy_beta, vix_beta]
-      [12:15] [vol_63d, skew_21d, kurt_21d]
-      [15:18] [is_bond, is_commodity, is_vol_product]
-    """
     N = len(TICKERS)
     feats = np.zeros((N, NODE_FEAT_DIM), dtype=np.float32)
 
+    # Dynamic slicing paths to handle multi-signal blocks safely
     feats[:, 0:N_SIGNALS]           = sig_slice.clip(-1.0, 1.0)
     feats[:, N_SIGNALS:2*N_SIGNALS] = np.abs(ic_slice).clip(0.0, 1.0)
-    feats[:, 10] = spy_betas.clip(-5.0, 5.0)
-    feats[:, 11] = vix_betas.clip(-5.0, 5.0)
-    feats[:, 12] = vol_arr.clip(0.0, 2.0)
-    feats[:, 13] = skew_arr.clip(-5.0, 5.0)
-    feats[:, 14] = kurt_arr.clip(-5.0, 5.0)
+    
+    # Use relative offsets based on N_SIGNALS dimension expansion
+    offset = 2 * N_SIGNALS
+    feats[:, offset]     = spy_betas.clip(-5.0, 5.0)
+    feats[:, offset + 1] = vix_betas.clip(-5.0, 5.0)
+    feats[:, offset + 2] = vol_arr.clip(0.0, 2.0)
+    feats[:, offset + 3] = skew_arr.clip(-5.0, 5.0)
+    feats[:, offset + 4] = kurt_arr.clip(-5.0, 5.0)
 
     for i, ticker in enumerate(TICKERS):
         b, c, v = _ASSET_CLASS_FEATS.get(ticker, (0, 0, 0))
-        feats[i, 15] = float(b)
-        feats[i, 16] = float(c)
-        feats[i, 17] = float(v)
+        feats[i, offset + 5] = float(b)
+        feats[i, offset + 6] = float(c)
+        feats[i, offset + 7] = float(v)
 
     return feats
 
@@ -173,23 +179,24 @@ def build_global_features(
     urgency:     float,
     spy_vol:     float,
     breadth:     float,
-    sig_means:   np.ndarray,   # (S,)  cross-sectional mean of each signal
-    ic_means:    np.ndarray,   # (S,)  cross-sectional mean |IC| per signal
-    t_frac:      float,        # fractional time index ∈ [0, 1]
+    sig_means:   np.ndarray,   
+    ic_means:    np.ndarray,   
+    t_frac:      float,        
     vix_z:       float = 0.0,
 ) -> np.ndarray:
-    """
-    Assemble (GLOBAL_FEAT_DIM=16,) global context vector.
-    """
     g = np.zeros(GLOBAL_FEAT_DIM, dtype=np.float32)
-    g[0]  = float(urgency)
-    g[1]  = float(spy_vol)
-    g[2]  = float(breadth)
-    g[3:3+N_SIGNALS]  = sig_means.clip(-1.0, 1.0)   # [3:8]
-    g[8:8+N_SIGNALS]  = np.abs(ic_means).clip(0.0, 1.0)  # [8:13]
-    g[13] = 0.0                 # reserved
-    g[14] = float(t_frac)
-    g[15] = float(vix_z)
+    g[0] = float(urgency)
+    g[1] = float(spy_vol)
+    g[2] = float(breadth)
+    
+    # Dynamic slicing paths for your global feature matrices
+    g[3 : 3 + N_SIGNALS] = sig_means.clip(-1.0, 1.0)
+    g[3 + N_SIGNALS : 3 + 2 * N_SIGNALS] = np.abs(ic_means).clip(0.0, 1.0)
+    
+    # End boundaries mapped to terminal vectors
+    g[3 + 2 * N_SIGNALS]     = 0.0  # reserved slot
+    g[3 + 2 * N_SIGNALS + 1] = float(t_frac)
+    g[3 + 2 * N_SIGNALS + 2] = float(vix_z)
     return g
 
 

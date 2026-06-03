@@ -43,7 +43,7 @@ ltc:
 # ── 3. PORTFOLIO ALLOCATOR (EDT) ────────────────────────────────────
 edt:
   state_dim: 192          # obs_dim (52) + latent_dim (16) + alpha_dim (124)
-  action_dim: 25          # Matches the ETF universe defined in universe.yaml
+  action_dim: 100          # Matches the ETF universe defined in universe.yaml
   d_model: 512            # Transformer hidden dimension
   n_heads: 8
   n_layers: 6
@@ -54,7 +54,7 @@ edt:
   # ── P2: Economic loss weights ──────────────────────────────────────
   lambda_econ: 0.30       # Total weight on economic loss vs DDPM denoising loss
   lambda_calmar: 0.20     # Calmar ratio weight within economic loss
-  lambda_turnover: 0.10   # One-way turnover penalty coefficient
+  lambda_turnover: 5   # One-way turnover penalty coefficient
 
 # ── 4. DEEP HEDGING NETWORK ─────────────────────────────────────────
 hedging:

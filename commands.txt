@@ -26,3 +26,5 @@ bash run_backtest.sh --skip-audit
 PYTHONPATH=. python scripts/precompute_alpha_signals.py
 
 PYTHONPATH=. python scripts/run_standalone_backtest.py
+
+PYTHONPATH=. python scripts/train_gat_router.py

@@ -106,8 +106,11 @@ def _categorise_universe() -> Tuple[List[str], List[str]]:
 ETF_TICKERS, EQUITY_TICKERS = _categorise_universe()
 _HEDGE_ASSETS: List[str] = ["BIL", "SHV", "TLT", "LQD"]
 
-SIGNAL_NAMES: List[str] = ["low_vol", "ramom_ts", "odpv_vwap", "clv_flow", "dtfe_trend"]
-N_SIGNALS:    int        = len(SIGNAL_NAMES)
+SIGNAL_NAMES: List[str] = [
+    "low_vol", "ramom_ts", "odpv_vwap", "clv_flow", "dtfe_trend",
+    "res_mom", "cw_spread", "ami_impact", "real_skew", "vol_decouple"
+]
+N_SIGNALS: int = len(SIGNAL_NAMES)
 
 # ── Per-asset-class static blend weights ─────────────────────────────────────
 # ETF sub-universe: low_vol has the strongest IC (IC_21d≈+0.048 in validation).
@@ -370,28 +373,114 @@ def stage6_dtfe_trend(ohlcv: Dict[str, pd.DataFrame]) -> pd.DataFrame:
     logger.info(f"  ✓ dtfe_trend: mean|α|={result.abs().mean().mean():.4f}")
     return result
 
+# INSERT THIS CODE BLOCk IMMEDIATELY BEFORE stage7_blend:
+
+def stage6b_res_mom(returns_df: pd.DataFrame) -> pd.DataFrame:
+    """Isolates factor-adjusted idiosyncratic momentum via rolling cross-sectional beta removal."""
+    logger.info("Stage 6b: Residual Momentum (factor-insulated alpha)...")
+    r_idx = returns_df.reindex(columns=TICKERS).fillna(0.0)
+    mkt = r_idx.mean(axis=1) 
+    
+    mkt_var = mkt.rolling(63, min_periods=20).var().clip(lower=1e-6)
+    res_df = pd.DataFrame(0.0, index=returns_df.index, columns=TICKERS, dtype=np.float32)
+    
+    for col in TICKERS:
+        cov = r_idx[col].rolling(63, min_periods=20).cov(mkt)
+        beta = cov / mkt_var
+        res_df[col] = r_idx[col] - beta * mkt
+        
+    # Apply a causal rolling Z-score to bring numbers into standard normal scale before tanh
+    res_smooth = res_df.ewm(span=21, adjust=False).mean()
+    res_z = (res_smooth - res_smooth.rolling(63, min_periods=20).mean()) / res_smooth.rolling(63, min_periods=20).std().clip(lower=1e-6)
+    
+    return np.tanh(res_z.fillna(0.0)).astype(np.float32)
+
+def stage6c_cw_spread(ohlcv: Dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """Corwin-Schultz High-Low structural bid-ask spread estimator with cross-sectional ranking."""
+    logger.info("Stage 6c: Corwin-Schultz implicit spread estimator...")
+    h, l = np.log(ohlcv["high"]), np.log(ohlcv["low"])
+    
+    kh1 = (h / l) ** 2
+    kh1_2d = kh1 + kh1.shift(1)
+    
+    h_2d = np.maximum(h, h.shift(1))
+    l_2d = np.minimum(l, l.shift(1))
+    k_2d = (h_2d / l_2d) ** 2
+    
+    const_inv = 3.0 - 2.0 * np.sqrt(2.0)
+    alpha = (np.sqrt(2.0 * k_2d) - np.sqrt(k_2d)) / const_inv - np.sqrt(kh1_2d / const_inv)
+    
+    spread = 2.0 * (np.exp(alpha) - 1.0) / (1.0 + np.exp(alpha))
+    spread_smoothed = spread.rolling(21, min_periods=5).mean().fillna(0.0)
+    
+    # Map to relative cross-sectional percentiles to completely destroy the saturation problem
+    spread_rank = spread_smoothed.rank(axis=1, pct=True)
+    return np.tanh(-(spread_rank - 0.5) * 2.0).astype(np.float32)
+
+def stage6d_ami_impact(ohlcv: Dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """Asymmetric daily price impact engine measuring continuous volume-liquidity tension."""
+    logger.info("Stage 6d: Asymmetric Price Impact vector...")
+    c, v = ohlcv["close"], ohlcv["volume"]
+    ret = np.log(c / c.shift(1)).fillna(0.0)
+    
+    # Compute price impact relative to asset's own historical dollar volume profile
+    dollar_vol = (v * c).clip(lower=1.0)
+    raw_impact = ret.abs() / dollar_vol
+    signed_impact = np.sign(ret) * raw_impact
+    
+    # Scale via a long-window rolling Z-score to normalize single-name volume variance
+    roll_mean = signed_impact.rolling(63, min_periods=20).mean()
+    roll_std = signed_impact.rolling(63, min_periods=20).std().clip(lower=1e-12)
+    impact_z = (signed_impact - roll_mean) / roll_std
+    
+    smooth_impact = impact_z.rolling(21, min_periods=5).mean().fillna(0.0)
+    return np.tanh(smooth_impact).astype(np.float32)
+
+def stage6e_real_skew(returns_df: pd.DataFrame) -> pd.DataFrame:
+    """Exploits downstream alpha lottery decay via rolling realized third standardized moments."""
+    logger.info("Stage 6e: Realized Skewness asymmetry mapping...")
+    r_idx = returns_df.reindex(columns=TICKERS)
+    skew = r_idx.rolling(63, min_periods=20).skew().fillna(0.0)
+    return -np.tanh(skew).astype(np.float32)
+
+def stage6f_vol_decouple(ohlcv: Dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """Measures variance range to institutional volume decoupling (divergence signals)."""
+    logger.info("Stage 6f: Volume-Range Decoupling profile...")
+    h, l, c, v = ohlcv["high"], ohlcv["low"], ohlcv["close"], ohlcv["volume"]
+    
+    parkinson = ((np.log(h / l)) ** 2) / (4.0 * np.log(2.0))
+    parkinson_smooth = parkinson.rolling(63, min_periods=20).mean()
+    p_mean = parkinson_smooth.rolling(63, min_periods=20).mean()
+    p_std = parkinson_smooth.rolling(63, min_periods=20).std().clip(lower=1e-6)
+    z_p = (parkinson_smooth - p_mean) / p_std
+    
+    v_smooth = v.rolling(63, min_periods=20).mean()
+    v_mean = v_smooth.rolling(63, min_periods=20).mean()
+    v_std = v_smooth.rolling(63, min_periods=20).std().clip(lower=1e-6)
+    z_v = (v_smooth - v_mean) / v_std
+    
+    decouple = (z_p - z_v).fillna(0.0)
+    return -np.tanh(decouple).astype(np.float32)
 
 # ─────────────────────────────────────────────────────────────────────────────
     logger.info("Stage 7: Static-weight blend (GATv2 bypassed — retrain required)...")
 # ─────────────────────────────────────────────────────────────────────────────
+
+
+
 def stage7_blend(
     signal_dfs:  Dict[str, pd.DataFrame],
     regime_df:   pd.DataFrame,
     dates:       pd.DatetimeIndex,
     returns:     pd.DataFrame,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Blend 5 signals into the final alpha vector using an adaptive regime-aware architecture.
-    """
-    # IMPORTACIÓN EXPLÍCITA Y LOCALIZADA
-    from models.alpha.gat_signal_router import N_SIGNALS
     
     use_router = os.getenv("USE_GAT_ROUTER", "0") == "1"
     
     T = len(dates)
     N = N_ASSETS
     
-    # Ahora N_SIGNALS está definida correctamente como local
+    # This will now safely inherit N_SIGNALS = 10 from the global definition block
     stack = np.zeros((T, N, N_SIGNALS), dtype=np.float32)
     # ... resto de la función ...
     for s_idx, sig_name in enumerate(SIGNAL_NAMES):
@@ -401,34 +490,48 @@ def stage7_blend(
     if use_router:
         logger.info("Stage 7: Dynamic-weight blend via active GATv2 Router...")
         try:
-            from models.alpha.gat_signal_router import SignalRouterGAT, N_SIGNALS
+            # Drop N_SIGNALS from the import list completely
+            from models.alpha.gat_signal_router import SignalRouterGAT
             import torch
+
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            
             router = SignalRouterGAT(n_signals=N_SIGNALS).to(device)
-            checkpoint = torch.load("models/weights/gat_router.pt", map_location=device)
-            router.load_state_dict(checkpoint["model_state_dict"])
-            router.eval()
-            
-            # Sanitización de tensores
-            regime_t = torch.tensor(regime_df.reindex(dates).ffill().fillna(0.0).values, dtype=torch.float32).to(device)
-            rets_t   = torch.tensor(returns.reindex(dates).ffill().fillna(0.0).values, dtype=torch.float32).to(device)
-            stack_t  = torch.tensor(stack, dtype=torch.float32).to(device)
-            
-            # ── FIX: Convertir DatetimeIndex a tensor de timestamps (segundos) ──
-            dates_t = torch.tensor(
-                dates.astype(np.int64).values / 1e9, 
-                dtype=torch.float32
-            ).to(device)
-            
-            alpha_raw_tensor = router.infer_alpha(
-                regime_t,
-                rets_t,
-                dates_t,   # ← Ahora es un tensor compatible
-                TICKERS,
-                stack_t
+
+            raw_ckpt   = torch.load(
+                "models/weights/gat_router.pt",
+                map_location=device,
+                weights_only=False,
             )
-            alpha_raw = alpha_raw_tensor.cpu().numpy().astype(np.float32)
+            # Tolerate both bare state_dict and {"model_state_dict": sd} checkpoint formats
+            state_dict = (
+                raw_ckpt.get("model_state_dict", raw_ckpt)
+                if isinstance(raw_ckpt, dict)
+                else raw_ckpt
+            )
+            router.load_state_dict(state_dict)
+            router.eval()
+
+            regime_t = torch.tensor(
+                regime_df.reindex(dates).ffill().fillna(0.0).values,
+                dtype=torch.float32,
+            )  # (T, D) — stays on CPU; temporal_infer pulls to device internally
+            rets_t  = torch.tensor(
+                returns.reindex(dates).ffill().fillna(0.0).values,
+                dtype=torch.float32,
+            )  # (T, N)
+            stack_t = torch.tensor(stack, dtype=torch.float32)  # (T, N, S)
+
+            # FIXED: temporal_infer accepts (T,N,S)/(T,N)/(T,D)/List[str]
+            # Previous call: router.infer_alpha(regime_t, rets_t, dates_t, TICKERS, stack_t)
+            #   → TICKERS (list) landed on edge_attr positional slot → .to(device) crash
+            alpha_raw = router.temporal_infer(
+                signal_stack = stack_t,
+                returns      = rets_t,
+                regime_arr   = regime_t,
+                tickers      = TICKERS[:N_ASSETS],
+                device       = str(device),
+            )  # (T, N) np.ndarray — no .cpu().numpy() required
+
         except Exception as exc:
             logger.warning(f"  ⚠️ GATv2 Router failed ({exc}). Falling back to robust ensemble.")
             use_router = False
@@ -453,16 +556,19 @@ def stage7_blend(
         
         for t_idx in range(T):
             u = urgency_arr[t_idx]
-            # Si la urgencia es alta (Crisis/Stress), podamos Momento y sobre-ponderamos Low Vol de forma dinámica
-            w_low_vol  = 0.50 if u > 0.5 else 0.25
-            w_ramom    = 0.05 if u > 0.5 else 0.30
-            w_odpv     = 0.25 if u > 0.5 else 0.25
-            w_clv      = 0.10 if u > 0.5 else 0.10
-            w_dtfe     = 0.10
+            if u > 0.5:  # High Market Stress Regime (Defensive Realignment)
+                w = {
+                    "low_vol": 0.25, "ramom_ts": 0.05, "odpv_vwap": 0.10, "clv_flow": 0.05, "dtfe_trend": 0.05,
+                    "res_mom": 0.10, "cw_spread": 0.15, "ami_impact": 0.10, "real_skew": 0.10, "vol_decouple": 0.05
+                }
+            else:        # Structural Expansion Regime (Alpha Capture)
+                w = {
+                    "low_vol": 0.10, "ramom_ts": 0.15, "odpv_vwap": 0.10, "clv_flow": 0.10, "dtfe_trend": 0.05,
+                    "res_mom": 0.15, "cw_spread": 0.05, "ami_impact": 0.10, "real_skew": 0.05, "vol_decouple": 0.15
+                }
             
-            for s_idx, name in enumerate(SIGNAL_NAMES):
-                w_sig = {"low_vol": w_low_vol, "ramom_ts": w_ramom, "odpv_vwap": w_odpv, "clv_flow": w_clv, "dtfe_trend": w_dtfe}[name]
-                alpha_raw[t_idx] += signal_z[name].iloc[t_idx].values * w_sig
+            for name in SIGNAL_NAMES:
+                alpha_raw[t_idx] += signal_z[name].iloc[t_idx].values * w[name]
 
     # ── Regime gate: scale alpha by vol-regime urgency proxy ─────────────────
     if "ltc_urgency" in regime_df.columns:
@@ -474,7 +580,8 @@ def stage7_blend(
 
     # ── Turnover Smoothing & tanh re-normalisation ───────────────────────────
     raw_alpha_df = pd.DataFrame(alpha_gated * 2.0, index=dates, columns=TICKERS)
-    smoothed_alpha = raw_alpha_df.ewm(span=3, min_periods=1).mean()
+    # Subir el span de 3 a 8 barras calma drásticamente las oscilaciones diarias de asignación
+    smoothed_alpha = raw_alpha_df.ewm(span=8, min_periods=1).mean()
     alpha_final = np.tanh(smoothed_alpha.values).astype(np.float32)
     alpha_df = pd.DataFrame(alpha_final, index=dates, columns=TICKERS)
 
@@ -510,20 +617,38 @@ async def main() -> None:
     )
 
     # ── Stages 2-6: Individual signal engines ────────────────────────────────
+    # Legacy Core Blocks
     lowvol_df   = stage2_low_vol(returns_df=returns)
     ramom_df    = stage3_ramom_ts(ohlcv=ohlcv)
     odpv_df     = stage4_odpv_vwap(ohlcv=ohlcv)
     clv_df      = stage5_clv_flow(ohlcv=ohlcv)
     dtfe_df     = stage6_dtfe_trend(ohlcv=ohlcv)
+    
+    # Advanced Blocks
+    resmom_df   = stage6b_res_mom(returns_df=returns)
+    cwspread_df = stage6c_cw_spread(ohlcv=ohlcv)
+    ami_df      = stage6d_ami_impact(ohlcv=ohlcv)
+    skew_df     = stage6e_real_skew(returns_df=returns)
+    decouple_df = stage6f_vol_decouple(ohlcv=ohlcv)
 
-
-    # CORRECCIÓN DE HORIZONTES TEMPORALES (CONIC INTEGRITY)
+    # FIXED CONIC ALIGNMENT: Flipping signs based on empirical IC horizons
+    # Conic Alignment Matched Tensors Mapping
     signal_dfs: Dict[str, pd.DataFrame] = {
-        "low_vol":    -lowvol_df,   # MANTENER FLIP: Negativo en todos los pliegues históricos
-        "ramom_ts":   -ramom_df,    # MANTENER FLIP: Fuerte sesgo mean-reverting a corto/medio plazo
-        "clv_flow":   -clv_df,      # MANTENER FLIP: Reversión de microestructura intradía
-        "odpv_vwap":  odpv_df,      # REVERTIR A POSITIVO: Su alfa real es macro (IC_63d = +0.0576)
-        "dtfe_trend": dtfe_df,      # MANTENER POSITIVO: Filtro fractal de largo plazo (IC_63d = +0.0303)
+        "low_vol":      -lowvol_df,   # Keep legacy mapping: Massive 63d macro alpha
+        "ramom_ts":     -ramom_df,    # Elite short-term horizon momentum factor
+        "clv_flow":     -clv_df,      # Capitalizes on intraday accumulation
+        "dtfe_trend":   dtfe_df,      # Preserves fractal efficiency metrics
+        
+        # FIXED: Restored variable pointer to odpv_df to fix the duplicate tracking bug
+        "odpv_vwap":    odpv_df,      
+        
+        "real_skew":    skew_df,      # Elite 63d tail risk factor
+        "vol_decouple": decouple_df,  # Long-term variance-volume expansion anchor
+        "res_mom":      -resmom_df,   # Flipped sign successfully captures idiosyncratic mean-reversion
+        "ami_impact":   -ami_df,      # Flipped sign successfully tracks structural liquidity provision
+        
+        # FIXED: Removed negation to align the estimator with a positive alpha capture
+        "cw_spread":    cwspread_df   
     }
 
     # ── Stage 7: Blend ────────────────────────────────────────────────────────

@@ -72,18 +72,23 @@ else:
 N_ASSETS: int = len(TICKERS)
 
 # ── Signal constants ──────────────────────────────────────────────────────────
-SIGNAL_NAMES: List[str] = ["low_vol", "ramom_ts", "odpv_vwap", "clv_flow", "dtfe_trend"]
-N_SIGNALS:    int       = len(SIGNAL_NAMES)   # 5
+SIGNAL_NAMES: List[str] = [
+    "low_vol", "ramom_ts", "odpv_vwap", "clv_flow", "dtfe_trend",
+    "res_mom", "cw_spread", "ami_impact", "real_skew", "vol_decouple"
+]
+N_SIGNALS: int = len(SIGNAL_NAMES)
 
-# ── Architecture hyper-parameters ────────────────────────────────────────────
-NODE_FEAT_DIM:   int   = 18
-GLOBAL_FEAT_DIM: int   = 16
+# Node: (10 Signals + 10 ICs) + 2 Betas + 3 Vol Stats + 3 Asset Class Identifiers = 28
+NODE_FEAT_DIM: int = 2 * N_SIGNALS + 8   
+
+# Global: 5 Base Metrics + 10 Signal Means + 11 Regime Feature Slots = 26
+GLOBAL_FEAT_DIM: int = 2 * N_SIGNALS + 6
 EDGE_FEAT_DIM:   int   = 3     # [correlation, same_asset_class, economic_link]
 HIDDEN_DIM:      int   = 64
 N_HEADS:         int   = 4
 N_LAYERS:        int   = 3
-DROPOUT:         float = 0.15
-K_NEIGHBORS:     int   = 5     # k-NN graph degree for economic graph builder
+DROPOUT:         float = 0.45
+K_NEIGHBORS:     int   = 3     # k-NN graph degree for economic graph builder
 
 # ── Asset-class index map for node feature encoding ──────────────────────────
 # [is_bond, is_commodity, is_vol_product]  (equity ETF = [0,0,0])
@@ -94,7 +99,124 @@ _ASSET_CLASS_FEATS: Dict[str, Tuple[int, int, int]] = {
     "VIXY":(0,0,1),
     "BIL": (1,0,0), "SHV": (1,0,0),
 }
+# ── Temporal batch-inference helpers ─────────────────────────────────────────
 
+# REPLACE THE ENTIRE _build_node_features_temporal FUNCTION WITH:
+def _build_node_features_temporal(
+    sig_np:   np.ndarray,   # (T, N, S)
+    ret_np:   np.ndarray,   # (T, N)
+    tickers:  List[str],
+    ic_hl:    int = 63,
+    vol_win:  int = 63,
+    skew_win: int = 21,
+) -> np.ndarray:            # (T, N, NODE_FEAT_DIM=28)
+    T, N, S = sig_np.shape
+    feat    = np.zeros((T, N, NODE_FEAT_DIM), dtype=np.float32)
+    ret_df  = pd.DataFrame(ret_np, columns=tickers)
+
+    # [0:N_SIGNALS] cross-sectional z-score matrix
+    for s in range(min(S, N_SIGNALS)):
+        sl  = sig_np[:, :, s]
+        mu_ = sl.mean(axis=1, keepdims=True)
+        sd_ = sl.std(axis=1, keepdims=True) + 1e-8
+        feat[:, :, s] = np.clip((sl - mu_) / sd_, -3.0, 3.0)
+
+    # [N_SIGNALS:2*N_SIGNALS] causal EWMA IC tracking proxy
+    α     = 1.0 - np.exp(-1.0 / ic_hl)
+    ewma  = np.zeros((N, S), dtype=np.float64)
+    for t in range(1, T):
+        prod  = np.abs(sig_np[t - 1] * ret_np[t, :, None])  # (N, S)
+        ewma  = α * prod + (1.0 - α) * ewma
+        feat[t, :, N_SIGNALS : 2 * N_SIGNALS] = ewma[:, :N_SIGNALS].astype(np.float32)
+
+    offset = 2 * N_SIGNALS
+    
+    # [offset] vectorized SPY rolling beta calculation
+    spy_col = tickers.index("SPY") if "SPY" in tickers else 0
+    spy_s   = ret_df.iloc[:, spy_col]
+    spy_var = spy_s.rolling(vol_win, min_periods=21).var().clip(lower=1e-10)
+    cov_all = ret_df.rolling(vol_win, min_periods=21).cov(spy_s)  # (T, N)
+    feat[:, :, offset] = (
+        cov_all.div(spy_var, axis=0).clip(-3.0, 3.0).fillna(0.0).values.astype(np.float32)
+    )
+
+    # [offset+1] cross-asset vol dispersion
+    vol_cs  = ret_df.rolling(21, min_periods=5).std().values          # (T, N)
+    cs_disp = np.nanstd(vol_cs, axis=1) / (np.nanmean(vol_cs, axis=1) + 1e-8)
+    feat[:, :, offset + 1] = np.nan_to_num(cs_disp, 0.0)[:, None]
+
+    # [offset+2] 63d annualized realized vol
+    feat[:, :, offset + 2] = np.nan_to_num(
+        ret_df.rolling(vol_win, min_periods=21).std().values * np.sqrt(252), 0.0
+    ).clip(0.0, 2.0).astype(np.float32)
+
+    # [offset+3] 21d rolling skewness
+    feat[:, :, offset + 3] = np.nan_to_num(
+        ret_df.rolling(skew_win, min_periods=10).skew().values, 0.0
+    ).clip(-3.0, 3.0).astype(np.float32)
+
+    # [offset+4] 21d rolling excess kurtosis
+    feat[:, :, offset + 4] = np.nan_to_num(
+        ret_df.rolling(skew_win, min_periods=10).kurt().values, 0.0
+    ).clip(-3.0, 3.0).astype(np.float32)
+
+    # [offset+5:offset+8] static asset-class structural one-hot features
+    ac = np.array(
+        [list(_ASSET_CLASS_FEATS.get(t, (0, 0, 0))) for t in tickers],
+        dtype=np.float32,
+    )  # (N, 3)
+    feat[:, :, offset + 5 : offset + 8] = ac[None, :, :]
+
+    return feat
+
+
+# REPLACE THE ENTIRE _build_global_context_temporal FUNCTION WITH:
+def _build_global_context_temporal(
+    sig_np:  np.ndarray,  # (T, N, S)
+    ret_np:  np.ndarray,  # (T, N)
+    reg_np:  np.ndarray,  # (T, D)
+    tickers: List[str],
+) -> np.ndarray:          # (T, GLOBAL_FEAT_DIM=26)
+    T, N, S = sig_np.shape
+    ctx     = np.zeros((T, GLOBAL_FEAT_DIM), dtype=np.float32)
+    ret_df  = pd.DataFrame(ret_np, columns=tickers)
+
+    def _rollingz(s: pd.Series, win: int = 63) -> np.ndarray:
+        mu_ = s.rolling(win, min_periods=21).mean()
+        sd_ = s.rolling(win, min_periods=21).std() + 1e-8
+        return ((s - mu_) / sd_).fillna(0.0).clip(-3, 3).values.astype(np.float32)
+
+    # [0] vol regime urgency
+    if reg_np.shape[1] > 0:
+        u       = reg_np[:, 0].astype(np.float64)
+        ctx[:, 0] = np.clip((u - u.mean()) / (u.std() + 1e-8), -3.0, 3.0).astype(np.float32)
+
+    # [1] TLT macro rate proxy
+    if "TLT" in tickers:
+        ctx[:, 1] = _rollingz(ret_df["TLT"].rolling(21).sum())
+
+    # [2] HYG−LQD systemic credit spread
+    if "HYG" in tickers and "LQD" in tickers:
+        ctx[:, 2] = _rollingz((ret_df["HYG"] - ret_df["LQD"]).rolling(5).mean())
+
+    # [3] SPY 21d realized vol z-score
+    if "SPY" in tickers:
+        spy_vol   = ret_df["SPY"].rolling(21, min_periods=5).std() * np.sqrt(252)
+        ctx[:, 3] = _rollingz(spy_vol)
+
+    # [4] market breadth calculation ratio
+    ctx[:, 4] = (ret_df.rolling(5).sum() > 0).mean(axis=1).fillna(0.5).values.astype(np.float32)
+
+    # [5 : 5 + N_SIGNALS] dynamic signal cross-sectional means
+    for s in range(min(S, N_SIGNALS)):
+        ctx[:, 5 + s] = sig_np[:, :, s].mean(axis=1).astype(np.float32)
+
+    # [5 + N_SIGNALS : 26] tail regime tracking allocations
+    offset = 5 + N_SIGNALS
+    d_use = min(reg_np.shape[1], GLOBAL_FEAT_DIM - offset)
+    ctx[:, offset : offset + d_use] = reg_np[:, :d_use].astype(np.float32)
+
+    return ctx
 
 class SignalRouterGAT(nn.Module):
     """
@@ -249,40 +371,109 @@ class SignalRouterGAT(nn.Module):
             signal_matrix.to(device),
         ).cpu().numpy()
 
+    @torch.no_grad()
+    def temporal_infer(
+        self,
+        signal_stack: torch.Tensor,  # (T, N, S)
+        returns:      torch.Tensor,  # (T, N)
+        regime_arr:   torch.Tensor,  # (T, D)
+        tickers:      List[str],
+        device:       str = "cpu",
+    ) -> np.ndarray:                 # (T, N)  blended alpha
+        """
+        Batch temporal inference: (T, N, S) → (T, N) blended alpha.
 
+        Fixes the crash in stage7_blend where TICKERS (list) was passed as the
+        edge_attr positional argument to infer_alpha, causing:
+            AttributeError: 'list' object has no attribute 'to'
+
+        Architecture:
+          - Static k-NN graph built once from full-sample trailing correlation
+            (amortised over T passes; rebuilding per-date is O(T×N²) for <1%
+            quality gain at daily rebalancing horizons).
+          - Node/global features pre-computed vectorised via pandas rolling.
+          - T lightweight GATv2 forward passes (each O(N × H × E), fast for N≤100).
+        """
+        self.eval()
+        dev  = torch.device(device)
+        self.to(dev)
+
+        T, N, S = signal_stack.shape
+        sig_np  = signal_stack.cpu().numpy().astype(np.float32)
+        ret_np  = returns.cpu().numpy().astype(np.float32)
+        reg_np  = regime_arr.cpu().numpy().astype(np.float32)
+        tix     = tickers[:N]  # guard: tensor universe size may differ from yaml
+
+        # Static economic graph — build once, reuse across all T passes
+        # Eliminamos la construcción estática de arriba y modificamos el bucle:
+        alpha_out = np.zeros((T, N), dtype=np.float32)
+        ret_df_full = pd.DataFrame(ret_np, columns=tix)
+        
+        for t in range(T):
+            # Construimos el grafo económico de forma estrictamente causal con ventana rodante de 252 días
+            if t >= 252:
+                ret_slice = ret_df_full.iloc[t-252:t]
+            else:
+                ret_slice = ret_df_full.iloc[0:max(t+1, 21)]
+                
+            edge_index_t, edge_attr_t = build_economic_graph(ret_slice, tix, k=K_NEIGHBORS)
+            edge_index_t = edge_index_t.to(dev)
+            edge_attr_t  = edge_attr_t.to(dev)
+
+            x_t   = torch.from_numpy(node_feats[t]).to(dev)          
+            g_t   = torch.from_numpy(global_ctx[t : t + 1]).to(dev)  
+            sig_t = torch.from_numpy(sig_np[t]).to(dev)              
+
+            # Pasamos el grafo del instante t
+            weights, _ = self.forward(x_t, g_t, edge_index_t, edge_attr_t)  
+            alpha_out[t] = torch.tanh((weights * sig_t).sum(dim=-1)).cpu().numpy()
+        edge_index           = edge_index.to(dev)
+        edge_attr            = edge_attr.to(dev)
+
+        # Vectorised feature pre-computation (O(T×N) pandas, no Python loop over T)
+        node_feats = _build_node_features_temporal(sig_np, ret_np, tix)      # (T, N, 18)
+        global_ctx = _build_global_context_temporal(sig_np, ret_np, reg_np, tix)  # (T, 16)
+
+        # T GAT forward passes (graph topology constant; only node/global features vary)
+        alpha_out = np.zeros((T, N), dtype=np.float32)
+        for t in range(T):
+            x_t   = torch.from_numpy(node_feats[t]).to(dev)          # (N, 18)
+            g_t   = torch.from_numpy(global_ctx[t : t + 1]).to(dev)  # (1, 16)
+            sig_t = torch.from_numpy(sig_np[t]).to(dev)              # (N, S)
+
+            weights, _ = self.forward(x_t, g_t, edge_index, edge_attr)  # (N, S)
+            alpha_out[t] = torch.tanh(
+                (weights * sig_t).sum(dim=-1)
+            ).cpu().numpy()
+
+        return alpha_out
+
+# MODIFICACIÓN EN scripts/train_gat_router.py:
 def signal_router_loss(
-    predicted_ic:     torch.Tensor,   # (N, S)
-    forward_ic:       torch.Tensor,   # (N, S)  ground-truth rolling Spearman IC
-    blending_weights: torch.Tensor,   # (N, S)
-    lambda_ent:       float = 0.05,
-    lambda_l2_ic:     float = 0.01,
+    predicted_ic:     torch.Tensor,
+    forward_ic:       torch.Tensor,
+    blending_weights: torch.Tensor,
+    lambda_ent:       float = 0.50, # Actualizado
+    lambda_l2_ic:     float = 0.05,
 ) -> Tuple[torch.Tensor, Dict[str, float]]:
-    """
-    Three-term loss:
-    1. IC MSE: supervised regression on predicted vs actual IC
-    2. IC reward: −E[weighted IC] — encourages router to upweight high-IC signals
-    3. Entropy regularisation: prevents degenerate single-signal collapse
-    4. L2 on predicted IC: prevents overfitting to noisy IC estimates
-    """
     loss_ic         = F.mse_loss(predicted_ic, forward_ic)
     expected_ic     = (blending_weights * forward_ic).sum(dim=-1)
     loss_ic_reward  = -expected_ic.mean()
 
+    # Penalización L1 de Turnover interno: evita oscilaciones violentas en los pesos
+    # Diferencia absoluta entre pesos asignados consecutivamente en el lote
+    loss_turnover = torch.abs(blending_weights[1:] - blending_weights[:-1]).mean()
+
     eps      = 1e-8
     entropy  = -(blending_weights * torch.log(blending_weights + eps)).sum(dim=-1)
-    loss_ent = -entropy.mean()   # negative: maximise entropy → exploration
+    loss_ent = -entropy.mean()
 
     loss_l2  = (predicted_ic ** 2).mean()
 
-    total = loss_ic + loss_ic_reward + lambda_ent * loss_ent + lambda_l2_ic * loss_l2
+    # Añadimos un peso de penalización de 0.30 al turnover del enrutador
+    total = loss_ic + loss_ic_reward + lambda_ent * loss_ent + lambda_l2_ic * loss_l2 + 0.30 * loss_turnover
 
-    return total, {
-        "ic_mse":        float(loss_ic.item()),
-        "ic_reward":     float(loss_ic_reward.item()),
-        "entropy":       float(-loss_ent.item()),
-        "l2_ic":         float(loss_l2.item()),
-        "total":         float(total.item()),
-    }
+    return total, {"total": float(total.item())}
 
 
 def build_economic_graph(

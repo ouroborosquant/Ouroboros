@@ -1,0 +1,24 @@
+meta_labeling:
+  enabled: true
+  model_type: "lightgbm"
+  model_artifact_path: "src/models/weights/lgbm_orb_meta_v1.booster"
+  execution_probability_cutoff: 0.62   # Solo ejecutar si P(win) >= 0.62
+
+triple_barrier_labeling:
+  pt_multiplier: 2.5                  # Multiplicador ATR para barrera superior
+  sl_multiplier: 1.25                 # Multiplicador ATR para barrera inferior
+  max_holding_bars_5m: 24             # Barrera vertical (máximo 2 horas en el trade)
+
+feature_set:
+  - "rvol_opening_range"
+  - "range_to_atr_ratio"
+  - "distance_to_vwap_zscore"
+  - "cvd_trend_slope_5m"              # Cumulative Volume Delta slope
+  - "overnight_range_position_pct"   # Dónde abrió respecto al rango nocturno (ETH)
+  - "adx_14_level"
+  - "tick_imbalance_ratio"
+
+training:
+  cv_splits: 5
+  cv_type: "combinatorial_purged"     # CPCV para evitar lookahead bias
+  embargo_pct: 0.02

@@ -1,0 +1,54 @@
+timezone: "America/New_York"
+
+session_schedule:
+  rth_open: "09:30:00"
+  rth_close: "16:00:00"
+  orb_window_start: "09:30:00"
+  orb_window_end: "09:45:00"
+  max_entry_time: "11:30:00"
+  hard_flatten_time: "15:50:00"
+
+instruments:
+  MNQ:
+    name: "Micro E-mini Nasdaq-100"
+    exchange: "CME"
+    contract_size: 2
+    tick_size: 0.25
+    point_value: 2.00
+    tick_value: 0.50
+    currency: "USD"
+    slippage_estimate_ticks: 1.0
+    commission_per_contract: 0.62  # Broker + CME fees ida
+
+  NQ:
+    name: "E-mini Nasdaq-100"
+    exchange: "CME"
+    contract_size: 20
+    tick_size: 0.25
+    point_value: 20.00
+    tick_value: 5.00
+    currency: "USD"
+    slippage_estimate_ticks: 1.5
+    commission_per_contract: 2.25
+
+  MES:
+    name: "Micro E-mini S&P 500"
+    exchange: "CME"
+    contract_size: 5
+    tick_size: 0.25
+    point_value: 5.00
+    tick_value: 1.25
+    currency: "USD"
+    slippage_estimate_ticks: 1.0
+    commission_per_contract: 0.62
+
+  ES:
+    name: "E-mini S&P 500"
+    exchange: "CME"
+    contract_size: 50
+    tick_size: 0.25
+    point_value: 50.00
+    tick_value: 12.50
+    currency: "USD"
+    slippage_estimate_ticks: 1.0
+    commission_per_contract: 2.25

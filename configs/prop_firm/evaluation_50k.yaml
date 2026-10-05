@@ -1,0 +1,27 @@
+profile_name: "evaluation_50k"
+account_currency: "USD"
+initial_balance: 50000.00
+
+limits:
+  profit_target: 3000.00             # 6.0% target
+  max_trailing_drawdown: 2000.00     # 4.0% límite absoluto
+  drawdown_calculation_mode: "peak_unrealized" # O "closed_balance"
+  max_daily_loss_limit: 1000.00      # 2.0% límite por sesión
+  max_open_contracts:
+    MNQ: 6
+    MES: 6
+    NQ: 1
+    ES: 1
+
+timing_rules:
+  allow_overnight_positions: false
+  mandatory_flatten_time_est: "15:50:00"
+  news_restriction:
+    enabled: true
+    block_minutes_before: 5
+    block_minutes_after: 5
+    impact_levels: ["HIGH", "FOMC", "CPI", "NFP"]
+
+position_sizing:
+  risk_divisor_k: 14.0              # R = Max_Trailing_DD / K (~$140 por trade en 50k)
+  max_risk_pct_of_buffer: 0.07      # Máximo 7% del colchón disponible por trade

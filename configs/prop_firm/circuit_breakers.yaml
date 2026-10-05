@@ -1,0 +1,17 @@
+circuit_breakers:
+  # Nivel 1: Advertencia y reducción de riesgo
+  soft_loss_pct_of_daily_limit: 0.50   # Al 50% de la pérdida diaria máxima
+  soft_action: "halve_risk_per_trade"
+
+  # Nivel 2: Bloqueo de nuevas entradas
+  hard_loss_pct_of_daily_limit: 0.85   # Al 85% de la pérdida diaria
+  hard_action: "halt_new_entries_for_day"
+
+  # Nivel 3: Emergencia (Liquidación forzada y kill switch)
+  emergency_loss_pct_of_daily_limit: 0.95
+  emergency_action: "flatten_all_and_terminate_process"
+
+  # Límites operacionales de sesión
+  max_consecutive_losses: 2           # 2 pérdidas seguidas en el día = fin de sesión
+  max_trades_per_day: 3               # Máximo 3 ejecuciones por día
+  max_execution_slippage_ticks: 4     # Si la ejecución resbala > 4 ticks, cancelar orden

@@ -1,0 +1,29 @@
+strategy_name: "intraday_orb_trend_continuation"
+target_instrument: "MNQ"
+
+opening_range:
+  timeframe: "1m"
+  window_minutes: 15                  # 09:30 a 09:45 EST
+  buffer_ticks: 2                     # Ticks por encima del High / por debajo del Low
+
+entry_filters:
+  min_rvol_threshold: 1.35            # RVOL del rango frente a la media de 20 días
+  min_range_atr_ratio: 0.70           # Evitar rangos comprimidos sin volatilidad
+  max_range_atr_ratio: 2.20           # Evitar rangos sobre-extendidos (exhaustion)
+  require_vwap_alignment: true        # Largos solo si precio > VWAP; Cortos si < VWAP
+  max_entry_hour_est: "11:30:00"
+
+exit_rules:
+  stop_loss:
+    mode: "dynamic_atr"               # O "orb_opposite_band"
+    atr_multiplier: 1.25
+    hard_stop_max_ticks: 40           # Límite absoluto de protección
+  take_profit:
+    risk_reward_ratio: 2.50           # Asimetría objetivo 1:2.5
+  breakeven:
+    enabled: true
+    trigger_rr: 1.20                  # Al alcanzar 1.2R, mover stop a BE + 1 tick
+  trailing_stop:
+    enabled: true
+    trigger_rr: 1.80
+    trailing_atr_multiplier: 1.00

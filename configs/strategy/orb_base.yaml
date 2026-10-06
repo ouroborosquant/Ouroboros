@@ -8,22 +8,21 @@ opening_range:
 
 entry_filters:
   min_rvol_threshold: 1.00
-  min_range_atr_ratio: 0.70
-  max_range_atr_ratio: 2.20
-  require_vwap_alignment: true
-  max_entry_hour_est: "11:30:00"
+  min_range_atr_ratio: 0.60
+  max_range_atr_ratio: 2.50
+  allow_vwap_retest: false           # Solo retesteo al nivel del ORB
+  max_retest_bars: 25
 
 exit_rules:
   stop_loss:
-    mode: "dynamic_atr"
-    atr_multiplier: 1.25
-    hard_stop_max_ticks: 40
+    mode: "structural"
+    stop_atr_multiplier: 1.25
+    min_stop_ticks: 40               # Suelo estructural
+    hard_stop_max_ticks: 100          # Techo máximo permitido
+    max_cost_ratio: 0.12             # Cost-gate
   take_profit:
-    risk_reward_ratio: 2.50
-  breakeven:
-    enabled: true
-    trigger_rr: 1.20
-  trailing_stop:
-    enabled: true
-    trigger_rr: 1.80
-    trailing_atr_multiplier: 1.00
+    risk_reward_ratio: 2.20
+  trade_management:
+    scale_out_r: 1.00                # Cierre del 50% a +1R
+    breakeven_r: 1.20                # BE + costes en el runner
+    chandelier_trail_atr: 2.00

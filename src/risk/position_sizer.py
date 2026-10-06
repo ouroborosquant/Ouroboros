@@ -12,15 +12,63 @@ class InstrumentSpecs:
     max_contracts: int
 
 
+def lcb_half_kelly(r_multiples: list[float], z: float = 1.64, min_trades: int = 60) -> float:
+    """Risk fraction of effective capital from the lower confidence bound of mean R (half-Kelly).
+    Returns 0.0 until the edge is statistically distinguishable from zero."""
+    n = len(r_multiples)
+    if n < min_trades:
+        return 0.0
+    mean = sum(r_multiples) / n
+    var = sum((x - mean) ** 2 for x in r_multiples) / (n - 1)
+    if var <= 0:
+        return 0.0
+    mu_lcb = mean - z * math.sqrt(var / n)
+    return max(0.0, 0.5 * mu_lcb / var)
+
+
 class PositionSizer:
     """
-    Calcula el tamaño de la orden (en contratos enteros) en función del
-    colchón de pérdida disponible y la distancia al Stop Loss.
+    risk_$ = min( base(buffer) * shrink * edge_scale , caps )
+      base   = min(buffer/K, buffer*max_buffer_risk_pct)
+      shrink = (buffer / D)^gamma   (convex de-risking after giving back buffer)
+      caps   = hard_risk_cap_pct*buffer, 50% of remaining daily loss limit
+    Defaults reproduce the previous behaviour exactly.
     """
 
-    def __init__(self, risk_divisor_k: float = 14.0, max_buffer_risk_pct: float = 0.07) -> None:
+    def __init__(
+        self,
+        risk_divisor_k: float = 14.0,
+        max_buffer_risk_pct: float = 0.07,
+        *,
+        max_trailing_drawdown: float | None = None,
+        dd_gamma: float = 1.0,
+        hard_risk_cap_pct: float = 0.10,
+        dll_fraction: float = 0.5,
+    ) -> None:
         self.risk_divisor_k = risk_divisor_k
         self.max_buffer_risk_pct = max_buffer_risk_pct
+        self.max_trailing_drawdown = max_trailing_drawdown
+        self.dd_gamma = dd_gamma
+        self.hard_risk_cap_pct = hard_risk_cap_pct
+        self.dll_fraction = dll_fraction
+
+    def risk_budget(
+        self,
+        remaining_buffer: float,
+        edge_scale: float = 1.0,
+        daily_loss_remaining: float | None = None,
+    ) -> float:
+        if remaining_buffer <= 0 or edge_scale <= 0:
+            return 0.0
+        base = min(remaining_buffer / self.risk_divisor_k, remaining_buffer * self.max_buffer_risk_pct)
+        if self.max_trailing_drawdown:
+            ratio = min(1.0, remaining_buffer / self.max_trailing_drawdown)
+            base *= ratio ** self.dd_gamma
+        risk = base * edge_scale
+        risk = min(risk, remaining_buffer * self.hard_risk_cap_pct)
+        if daily_loss_remaining is not None:
+            risk = min(risk, max(0.0, daily_loss_remaining) * self.dll_fraction)
+        return risk
 
     def calculate_contracts(
         self,
@@ -28,29 +76,13 @@ class PositionSizer:
         entry_price: float,
         stop_loss_price: float,
         specs: InstrumentSpecs,
+        *,
+        edge_scale: float = 1.0,
+        daily_loss_remaining: float | None = None,
     ) -> int:
-        """
-        Calcula contratos enteros permitidos.
-        Si el stop loss es demasiado amplio para el colchón, devuelve 0 (orden rechazada).
-        """
-        if remaining_buffer <= 0:
-            return 0
-
-        # Máximo capital a arriesgar en este trade específico ($)
-        risk_by_k = remaining_buffer / self.risk_divisor_k
-        risk_by_pct = remaining_buffer * self.max_buffer_risk_pct
-        risk_dollars = min(risk_by_k, risk_by_pct)
-
-        # Distancia en puntos
+        risk_dollars = self.risk_budget(remaining_buffer, edge_scale, daily_loss_remaining)
         stop_distance_points = abs(entry_price - stop_loss_price)
-        if stop_distance_points <= 0:
+        if risk_dollars <= 0 or stop_distance_points <= 0:
             return 0
-
-        # Coste del riesgo por contrato individual
-        risk_per_contract = stop_distance_points * specs.point_value
-
-        raw_contracts = risk_dollars / risk_per_contract
-        contracts = math.floor(raw_contracts)
-
-        # Respetar límites máximos del contrato / firma
+        contracts = math.floor(risk_dollars / (stop_distance_points * specs.point_value))
         return min(max(0, contracts), specs.max_contracts)

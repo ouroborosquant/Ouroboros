@@ -92,7 +92,10 @@ class BacktestEngine:
             mode=drawdown_mode,
             lock_offset=lock_offset,
         )
-        self.position_sizer = PositionSizer()
+        self.position_sizer = PositionSizer(
+            max_trailing_drawdown=max_trailing_drawdown,
+            dd_gamma=1.5,
+        )
         self.compliance_validator = PropComplianceValidator(
             circuit_breaker=self.circuit_breaker,
             drawdown_tracker=self.drawdown_tracker,

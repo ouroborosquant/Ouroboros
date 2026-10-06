@@ -7,22 +7,23 @@ opening_range:
   buffer_ticks: 2
 
 entry_filters:
-  min_rvol_threshold: 1.00
-  min_range_atr_ratio: 0.60
-  max_range_atr_ratio: 2.50
-  allow_vwap_retest: false           # Solo retesteo al nivel del ORB
-  max_retest_bars: 25
+  min_rvol_threshold: 0.80           # Ajustado para volumen de Yahoo Futures
+  rvol_min_history: 2                # Warm-up de 2 días para muestras cortas
+  min_range_atr_ratio: 0.50
+  max_range_atr_ratio: 3.50
+  allow_vwap_retest: false
+  max_wait_bars: 25
 
 exit_rules:
   stop_loss:
     mode: "structural"
     stop_atr_multiplier: 1.25
-    min_stop_ticks: 40               # Suelo estructural
-    hard_stop_max_ticks: 100          # Techo máximo permitido
+    min_stop_ticks: 40               # Suelo mínimo (10 puntos)
+    hard_stop_max_ticks: 220         # Techo ampliado a 55 puntos (volatilidad real NQ)
     max_cost_ratio: 0.12             # Cost-gate
   take_profit:
     risk_reward_ratio: 2.20
   trade_management:
-    scale_out_r: 1.00                # Cierre del 50% a +1R
-    breakeven_r: 1.20                # BE + costes en el runner
+    scale_out_r: 1.00
+    breakeven_r: 1.20
     chandelier_trail_atr: 2.00

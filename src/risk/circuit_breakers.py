@@ -14,7 +14,9 @@ class CircuitBreaker:
         max_daily_loss: float,
         max_consecutive_losses: int = 2,
         max_trades_per_day: int = 3,
+        scratch_r: float = 0.05,
     ) -> None:
+        self.scratch_r = scratch_r
         self.max_daily_loss = abs(max_daily_loss)
         self.max_consecutive_losses = max_consecutive_losses
         self.max_trades_per_day = max_trades_per_day
@@ -24,15 +26,21 @@ class CircuitBreaker:
         self.trades_executed_today = 0
         self.status = CircuitBreakerStatus.NORMAL
 
-    def register_trade_closed(self, pnl: float) -> CircuitBreakerStatus:
-        """Actualiza estadísticas tras el cierre de un trade."""
+    def register_trade_closed(self, pnl: float, r_multiple: float | None = None) -> CircuitBreakerStatus:
+        """Actualiza estadísticas tras el cierre de un trade.
+
+        Un scratch (|R| <= scratch_r) cuenta como operación ejecutada pero ni suma ni
+        reinicia la racha de pérdidas.
+        """
         self.daily_pnl += pnl
         self.trades_executed_today += 1
 
-        if pnl < 0:
-            self.consecutive_losses += 1
-        else:
-            self.consecutive_losses = 0
+        is_scratch = r_multiple is not None and abs(r_multiple) <= self.scratch_r
+        if not is_scratch:
+            if pnl < 0:
+                self.consecutive_losses += 1
+            else:
+                self.consecutive_losses = 0
 
         return self.evaluate_status()
 

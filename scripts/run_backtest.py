@@ -14,6 +14,7 @@ import yaml
 from src.alpha.trend_continuation import ORBTrendContinuationStrategy
 from src.backtest.engine import BacktestEngine
 from src.backtest.fee_models import CMEFeeModel
+from src.backtest.fill_simulator import ManagementConfig
 from src.backtest.pass_probability import arrays_from_trades, pass_probability
 from src.core.events import BarEvent
 from src.risk.position_sizer import InstrumentSpecs
@@ -25,8 +26,11 @@ def main() -> None:
     parser.add_argument("--instrument", type=str, default="MNQ")
     parser.add_argument("--prop-config", type=str, default="configs/prop_firm/evaluation_50k.yaml")
     parser.add_argument("--strategy-config", type=str, default="configs/strategy/orb_base.yaml")
+    parser.add_argument("--one-lot-threshold", type=float, default=None,
+                        help="Round up to 1 contract if budget >= threshold * one-lot risk (e.g. 0.75)")
+    parser.add_argument("--lock-trigger-rr", type=float, default=None)
+    parser.add_argument("--lock-giveback-rr", type=float, default=0.75)
     args = parser.parse_args()
-
     console = Console()
 
     with open(args.prop_config) as f:
@@ -70,6 +74,10 @@ def main() -> None:
         drawdown_mode="peak_unrealized",
         lock_offset=100.0,
         stop_on_breach=True,
+        one_lot_threshold=args.one_lot_threshold,
+        management=ManagementConfig(
+            lock_trigger_rr=args.lock_trigger_rr, lock_giveback_rr=args.lock_giveback_rr
+        ),
     )
 
     console.print(f"[bold blue][*] Leyendo datos históricos reales desde {args.data}...[/bold blue]")

@@ -31,6 +31,11 @@ class ManagementConfig:
     trail_atr_time_scale: float = math.sqrt(5.0)  # ATR 1m -> ATR 5m equivalente (difusión browniana)
     time_stop_bars: int | None = 45
     time_stop_min_mfe_rr: float = 0.5
+    lock_trigger_rr: float | None = None
+    lock_giveback_rr: float = 0.75
+    # profit-lock R-denominado para posiciones SIN scale-out (1 lote). None = desactivado.
+    lock_trigger_rr: float | None = None
+    lock_giveback_rr: float = 0.75
 
 
 @dataclass
@@ -65,6 +70,7 @@ class ActivePosition:
     scaled_out: bool = False
     breakeven_set: bool = False
     trailing_active: bool = False
+    lock_active: bool = False
     ideal_gross: float = 0.0
     actual_gross: float = 0.0
     exit_notional: float = 0.0
@@ -128,7 +134,9 @@ class FillSimulator:
         self.management = management or ManagementConfig()
         cfg = self.execution
         # BE "con costes": cubre comisión ida y vuelta y el slippage del stop
-        self._be_offset = (2.0 * cfg.commission_per_side / tick_value + cfg.stop_slip_ticks) * tick_size
+        # redondeo hacia ARRIBA al siguiente tick: el BE nunca queda por debajo del coste real
+        be_ticks = 2.0 * cfg.commission_per_side / tick_value + cfg.stop_slip_ticks
+        self._be_offset = math.ceil(be_ticks - 1e-9) * tick_size
 
     def _snap(self, price: float) -> float:
         return round(round(price / self.tick_size) * self.tick_size, 4)
@@ -315,7 +323,12 @@ class FillSimulator:
             if tp_hit or partial_hit:
                 reason = "STOP_LOSS_AMBIGUOUS"
             elif (stop - position.initial_stop) * d > 0:
-                reason = "TRAIL_STOP" if position.trailing_active else "BREAKEVEN_STOP"
+                if position.trailing_active:
+                    reason = "TRAIL_STOP"
+                elif position.lock_active:
+                    reason = "LOCK_STOP"
+                else:
+                    reason = "BREAKEVEN_STOP"
             else:
                 reason = "STOP_LOSS"
             return self._exit_all(position, bar, ideal, cfg.stop_slip_ticks, reason)
@@ -342,6 +355,24 @@ class FillSimulator:
         if m.breakeven_enabled and not position.breakeven_set and mfe_rr >= m.breakeven_rr:
             if self._tighten_stop(position, entry_fill + d * self._be_offset, ref=bar.close):
                 position.breakeven_set = True
+
+        if (
+            m.lock_trigger_rr is not None
+            and position.partial_level is None
+            and mfe_rr >= m.lock_trigger_rr
+        ):
+            lock = position.extreme_price - d * m.lock_giveback_rr * position.risk_points
+            if self._tighten_stop(position, lock, ref=bar.close):
+                position.lock_active = True
+
+        if (
+            m.lock_trigger_rr is not None
+            and position.partial_level is None
+            and mfe_rr >= m.lock_trigger_rr
+        ):
+            lock = position.extreme_price - d * m.lock_giveback_rr * position.risk_points
+            if self._tighten_stop(position, lock, ref=bar.close):
+                position.lock_active = True
 
         if m.trail_enabled and atr is not None and atr > 0 and mfe_rr >= m.trail_trigger_rr:
             position.trailing_active = True

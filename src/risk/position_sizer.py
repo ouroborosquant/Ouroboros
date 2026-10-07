@@ -44,6 +44,7 @@ class PositionSizer:
         dd_gamma: float = 1.0,
         hard_risk_cap_pct: float = 0.10,
         dll_fraction: float = 0.5,
+        one_lot_threshold: float | None = None,
     ) -> None:
         self.risk_divisor_k = risk_divisor_k
         self.max_buffer_risk_pct = max_buffer_risk_pct
@@ -51,6 +52,7 @@ class PositionSizer:
         self.dd_gamma = dd_gamma
         self.hard_risk_cap_pct = hard_risk_cap_pct
         self.dll_fraction = dll_fraction
+        self.one_lot_threshold = one_lot_threshold
 
     def risk_budget(
         self,
@@ -84,5 +86,17 @@ class PositionSizer:
         stop_distance_points = abs(entry_price - stop_loss_price)
         if risk_dollars <= 0 or stop_distance_points <= 0:
             return 0
-        contracts = math.floor(risk_dollars / (stop_distance_points * specs.point_value))
+        one_lot_risk = stop_distance_points * specs.point_value
+        contracts = math.floor(risk_dollars / one_lot_risk)
+        if (
+            contracts == 0
+            and self.one_lot_threshold is not None
+            and risk_dollars >= self.one_lot_threshold * one_lot_risk
+            and one_lot_risk <= self.hard_risk_cap_pct * remaining_buffer
+            and (
+                daily_loss_remaining is None
+                or one_lot_risk <= max(0.0, daily_loss_remaining) * self.dll_fraction
+            )
+        ):
+            contracts = 1
         return min(max(0, contracts), specs.max_contracts)

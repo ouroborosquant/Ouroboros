@@ -68,6 +68,7 @@ class BacktestEngine:
         drawdown_mode: Literal["peak_unrealized", "closed_balance"] = "peak_unrealized",
         lock_offset: float = 100.0,
         stop_on_breach: bool = True,
+        one_lot_threshold: float | None = None,
     ) -> None:
         self.strategy = strategy
         self.specs = specs
@@ -95,6 +96,7 @@ class BacktestEngine:
         self.position_sizer = PositionSizer(
             max_trailing_drawdown=max_trailing_drawdown,
             dd_gamma=1.5,
+            one_lot_threshold=one_lot_threshold,
         )
         self.compliance_validator = PropComplianceValidator(
             circuit_breaker=self.circuit_breaker,
@@ -122,6 +124,8 @@ class BacktestEngine:
         self.signals_seen = 0
         self.signals_passed_meta = 0
         self.rejects: Counter[str] = Counter()
+        self.signal_log: list[tuple[str, object, object, float]] = []
+        self.reject_log: list[tuple[str, str, float]] = []
         self.exit_reasons: Counter[str] = Counter()
         self.pending_stats: Counter[str] = Counter()
         self.dll_flattens = 0
@@ -212,7 +216,7 @@ class BacktestEngine:
         # deshace el PnL MTM escrito por update_intraday_pnl antes de que el breaker sume el cierre
         self.circuit_breaker.daily_pnl = self.day_closed_pnl
         self.day_closed_pnl += trade.net_pnl
-        self.circuit_breaker.register_trade_closed(trade.net_pnl)
+        self.circuit_breaker.register_trade_closed(trade.net_pnl, r_multiple=trade.r_multiple)
         self.drawdown_tracker.update(closed_balance=self.current_balance)
         self.active_position = None
         self._risk_flatten_pending = False
@@ -293,7 +297,14 @@ class BacktestEngine:
                 print(f"[-] Señal #{self.signals_seen} ({signal.direction.label}) rechazada por Meta-Labeling: P={meta_prob:.3f}")
             return
         self.signals_passed_meta += 1
-
+        md = signal.metadata
+        self.signal_log.append((
+            str(bar.timestamp), md.get("rr"), md.get("stop_ticks"), round(float(md.get("atr", 0.0)), 2),
+        ))
+        md = signal.metadata
+        self.signal_log.append((
+            str(bar.timestamp), md.get("rr"), md.get("stop_ticks"), round(float(md.get("atr", 0.0)), 2),
+        ))
         order_type = str(signal.metadata.get("order_type", "MARKET"))
         tick = self.specs.tick_size
 
@@ -307,6 +318,12 @@ class BacktestEngine:
         valid, reason, contracts = self.compliance_validator.validate_signal(signal, bar.timestamp)
         if not valid or contracts <= 0:
             self.rejects["compliance"] += 1
+            dt = self.drawdown_tracker
+            buf = dt.current_balance + dt.unrealized_pnl - dt.floor
+            self.reject_log.append((
+                str(bar.timestamp), reason, round(stop_ticks * tick, 2),
+                round(buf, 2), round(self.position_sizer.risk_budget(buf), 2),
+            ))
             if self.debug and self.rejects["compliance"] <= 5:
                 print(f"[-] Señal rechazada por PropCompliance: {reason}")
             return
@@ -367,6 +384,9 @@ class BacktestEngine:
             "floor_locked": self.drawdown_tracker.locked,
             "dll_flattens": self.dll_flattens,
             "ambiguous_stops": self.exit_reasons["STOP_LOSS_AMBIGUOUS"],
+            "reject_log": self.reject_log,
+            "signal_log": self.signal_log,
+            "signal_log": self.signal_log,
         }
         if self.debug:
             print(f"[*] Diagnóstico: {diagnostics}")

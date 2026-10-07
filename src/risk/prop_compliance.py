@@ -57,8 +57,8 @@ class PropComplianceValidator:
             specs=instrument,
         )
 
-        # Reducir contratos a la mitad si estamos en SOFT_ALERT
-        if self.circuit_breaker.status == CircuitBreakerStatus.SOFT_ALERT:
+        # Reducir contratos a la mitad si estamos en SOFT_ALERT (nunca promover 0 -> 1)
+        if contracts > 0 and self.circuit_breaker.status == CircuitBreakerStatus.SOFT_ALERT:
             contracts = max(1, contracts // 2)
 
         if contracts <= 0:
